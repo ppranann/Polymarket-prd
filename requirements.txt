@@ -1,0 +1,43 @@
+# Polymarket Weather Sniping Bot - Dependencies
+# =============================================
+
+# Async and HTTP
+aiohttp>=3.9.0
+asyncio>=3.4.3
+
+# Polymarket CLOB Client
+py-clob-client>=0.1.0
+
+# Numerical Computing
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Configuration
+pyyaml>=6.0
+
+# AWS SDK (for Secrets Manager)
+boto3>=1.28.0
+botocore>=1.31.0
+
+# Supabase (Database/Logging)
+supabase>=1.0.0
+
+# Trading utilities
+web3>=6.0.0
+
+# Logging
+structlog>=23.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+
+# Utilities
+python-dotenv>=1.0.0
+tenacity>=8.2.0
+
+# Advanced Risk Management (for optional features)
+pandas>=2.0.0
+scikit-learn>=1.3.0  # For ML-based predictions if implemented
+

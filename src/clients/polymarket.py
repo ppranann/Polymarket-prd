@@ -1,0 +1,650 @@
+"""
+Polymarket CLOB Client Module
+=============================
+Wrapper around py-clob-client for Polymarket CLOB interactions.
+Provides market data fetching and order execution with EIP-712 signing.
+
+IMPORTANT: Uses get_price endpoint instead of get_book to avoid stale data issues.
+"""
+
+import asyncio
+import logging
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
+
+from py_clob_client.client import ClobClient
+from py_clob_client.signer import Signer
+from py_clob_client.order_builder.constants import (
+    CHAIN_ID_POLYGON,
+    SIDE_BUY,
+    SIDE_SELL,
+    TIME_IN_FORCE_GTC,
+)
+from py_clob_client.order_builder.builders import (
+    MarketOrderBuilder,
+    LimitOrderBuilder,
+)
+
+from .config import BotConfig
+from .secrets_manager import BotSecrets
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Market:
+    """Represents a Polymarket market"""
+    id: str
+    question: str
+    condition_id: str
+    outcome: str  # "YES" or "NO"
+    yes_price: float
+    no_price: float
+    active: bool
+    liquidity_rewards_enabled: bool
+    volume: float
+    category: str
+    creator: Optional[str] = None
+    closing_time: Optional[datetime] = None
+    metadata: Optional[Dict] = None
+
+
+@dataclass
+class Order:
+    """Represents a placed order"""
+    order_id: str
+    market_id: str
+    side: str  # "BUY" or "SELL"
+    price: float
+    size: float
+    filled_size: float
+    status: str
+    nonce: int
+    created_at: datetime
+    expires_at: datetime
+
+
+@dataclass
+class Position:
+    """Represents an open position"""
+    market_id: str
+    outcome: str
+    size: float
+    avg_price: float
+    current_value: float
+    unrealized_pnl: float
+
+
+class PolymarketClient:
+    """
+    Client for interacting with Polymarket CLOB.
+    
+    Features:
+    - Market data fetching (prices, order books)
+    - EIP-712 signed order placement
+    - Post-Only order support for maker rewards
+    - Position and order tracking
+    """
+    
+    def __init__(
+        self,
+        config: BotConfig,
+        secrets: BotSecrets,
+        paper_trading: bool = False
+    ):
+        """
+        Initialize Polymarket CLOB client.
+        
+        Args:
+            config: Bot configuration
+            secrets: Bot secrets (API keys, private key)
+            paper_trading: If True, use paper trading mode
+        """
+        self.config = config
+        self.secrets = secrets
+        self.paper_trading = paper_trading or config.development.paper_trading
+        
+        # Initialize signer for EIP-712 orders
+        self.signer = Signer(
+            private_key=secrets.polygon_private_key,
+            chain_id=config.chain_id
+        )
+        
+        # Initialize CLOB client
+        self.clob = ClobClient(
+            host=config.api_url,
+            key=secrets.polymarket_api_key,
+            secret=secrets.polymarket_api_secret,
+            chain_id=config.chain_id,
+            funder=config.api_key  # API key as funder
+        )
+        
+        # Nonce counter
+        self._nonce_lock = asyncio.Lock()
+    
+    async def get_nonce(self) -> int:
+        """
+        Get the next available nonce for order signing.
+        
+        Returns:
+            Unique nonce for order
+        """
+        async with self._nonce_lock:
+            return self.clob.get_nonce()
+    
+    async def get_price(self, market_id: str) -> float:
+        """
+        Get current price for a market using get_price endpoint.
+        
+        IMPORTANT: This uses get_price instead of get_book to avoid
+        stale data issues known in early 2026.
+        
+        Args:
+            market_id: The market ID (condition ID)
+            
+        Returns:
+            Current YES price as a float (0.0 to 1.0)
+        """
+        try:
+            # py-clob-client's get_price returns the mid price
+            # This is more reliable than get_book for current pricing
+            price_data = await self.clob.get_price(market_id=market_id)
+            
+            if price_data is None:
+                logger.warning(f"No price data for market {market_id}")
+                return 0.5  # Default to mid price
+            
+            # Price should be between 0 and 1
+            price = float(price_data)
+            return max(0.01, min(0.99, price))
+            
+        except Exception as e:
+            logger.error(f"Error getting price for {market_id}: {e}")
+            raise
+    
+    async def get_market(self, market_id: str) -> Market:
+        """
+        Get detailed market information.
+        
+        Args:
+            market_id: The market ID
+            
+        Returns:
+            Market object with full details
+        """
+        try:
+            market_data = await self.clob.get_market(market_id=market_id)
+            
+            # Extract YES/NO prices from the market data
+            # This may need adjustment based on actual API response structure
+            yes_price = float(market_data.get('yes_price', market_data.get('p_yes', 0.5)))
+            no_price = float(market_data.get('no_price', market_data.get('p_no', 0.5)))
+            
+            # Check for Liquidity Rewards (Blue Clock indicator)
+            lr_enabled = (
+                market_data.get('liquidity_rewards_enabled', False) or
+                market_data.get('blue_clock', False) or
+                'rewards' in str(market_data).lower()
+            )
+            
+            return Market(
+                id=market_id,
+                question=market_data.get('question', ''),
+                condition_id=market_data.get('condition_id', market_id),
+                outcome="YES",
+                yes_price=yes_price,
+                no_price=no_price,
+                active=market_data.get('active', True),
+                liquidity_rewards_enabled=lr_enabled,
+                volume=float(market_data.get('volume', 0)),
+                category=market_data.get('category', 'unknown'),
+                creator=market_data.get('creator'),
+                closing_time=datetime.fromtimestamp(
+                    market_data.get('closing_time', time.time() + 86400)
+                ),
+                metadata=market_data
+            )
+            
+        except Exception as e:
+            logger.error(f"Error getting market {market_id}: {e}")
+            raise
+    
+    async def get_markets(
+        self,
+        category: Optional[str] = None,
+        active: bool = True,
+        limit: int = 100
+    ) -> List[Market]:
+        """
+        Get list of markets with optional filtering.
+        
+        Args:
+            category: Filter by category (e.g., "weather")
+            active: Only return active markets
+            limit: Maximum number of markets to return
+            
+        Returns:
+            List of Market objects
+        """
+        try:
+            filters = {}
+            if category:
+                filters['category'] = category
+            if active:
+                filters['active'] = True
+            
+            markets_data = await self.clob.get_markets(
+                filter=filters if filters else None,
+                limit=limit
+            )
+            
+            markets = []
+            for m in markets_data:
+                market = await self.get_market(m['id'])
+                markets.append(market)
+            
+            return markets
+            
+        except Exception as e:
+            logger.error(f"Error fetching markets: {e}")
+            return []
+    
+    async def get_order_book(self, market_id: str) -> Dict[str, Any]:
+        """
+        Get order book for a market (use sparingly, prefer get_price).
+        
+        Args:
+            market_id: The market ID
+            
+        Returns:
+            Order book data with bids and asks
+        """
+        try:
+            return await self.clob.get_order_book(market_id=market_id)
+        except Exception as e:
+            logger.error(f"Error getting order book for {market_id}: {e}")
+            raise
+    
+    def _build_limit_order(
+        self,
+        market_id: str,
+        side: str,
+        price: float,
+        size: float,
+        nonce: int,
+        post_only: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Build a limit order with EIP-712 signature.
+        
+        Args:
+            market_id: Market to trade
+            side: "BUY" or "SELL"
+            price: Price in dollars (0.10 = 10 cents)
+            size: Size in USDC
+            nonce: Unique order nonce
+            post_only: If True, order is post-only (maker only)
+            
+        Returns:
+            Signed order dictionary ready for submission
+        """
+        # Convert price to outcome token amount
+        # Price of 0.10 means you pay $0.10 for 1 outcome token worth $1.00
+        # So the amount of tokens = size / price
+        size_in_tokens = size / price
+        
+        if side.upper() == "BUY":
+            order_builder = LimitOrderBuilder(
+                market_id=market_id,
+                side=SIDE_BUY,
+                size=size_in_tokens,
+                price=price,  # Price in dollars
+                nonce=nonce,
+                time_in_force=TIME_IN_FORCE_GTC,
+                post_only=post_only
+            )
+        else:
+            order_builder = LimitOrderBuilder(
+                market_id=market_id,
+                side=SIDE_SELL,
+                size=size_in_tokens,
+                price=price,
+                nonce=nonce,
+                time_in_force=TIME_IN_FORCE_GTC,
+                post_only=post_only
+            )
+        
+        # Build and sign the order
+        signed_order = self.signer.sign_order(order_builder.build())
+        
+        return signed_order
+    
+    def _build_market_order(
+        self,
+        market_id: str,
+        side: str,
+        size: float,
+        price: float  # Expected price for sizing
+    ) -> Dict[str, Any]:
+        """
+        Build a market order for fast execution (e.g., auto-exit).
+        
+        Args:
+            market_id: Market to trade
+            side: "BUY" or "SELL"
+            size: Size in USDC
+            price: Current market price for sizing
+            
+        Returns:
+            Signed market order dictionary
+        """
+        size_in_tokens = size / price
+        
+        if side.upper() == "BUY":
+            order_builder = MarketOrderBuilder(
+                market_id=market_id,
+                side=SIDE_BUY,
+                size=size_in_tokens,
+                nonce=self.clob.get_nonce()
+            )
+        else:
+            order_builder = MarketOrderBuilder(
+                market_id=market_id,
+                side=SIDE_SELL,
+                size=size_in_tokens,
+                nonce=self.clob.get_nonce()
+            )
+        
+        signed_order = self.signer.sign_order(order_builder.build())
+        
+        return signed_order
+    
+    async def place_limit_order(
+        self,
+        market_id: str,
+        side: str,
+        price: float,
+        size: float,
+        post_only: bool = True
+    ) -> Order:
+        """
+        Place a limit order on Polymarket.
+        
+        Args:
+            market_id: Market ID
+            side: "BUY" or "SELL"
+            price: Price in USDC (0.0 to 1.0)
+            size: Size in USDC
+            post_only: If True, order won't execute immediately (maker)
+            
+        Returns:
+            Order object with order details
+        """
+        if self.paper_trading:
+            logger.info(f"[PAPER] Would place {side} limit order: {size} USDC @ ${price}")
+            return self._create_paper_order(market_id, side, price, size, "LIMIT")
+        
+        nonce = await self.get_nonce()
+        signed_order = self._build_limit_order(
+            market_id=market_id,
+            side=side,
+            price=price,
+            size=size,
+            nonce=nonce,
+            post_only=post_only
+        )
+        
+        try:
+            response = await self.clob.post_order(signed_order)
+            
+            logger.info(f"Placed {side} limit order: {size} USDC @ ${price} on {market_id}")
+            
+            return Order(
+                order_id=response.get('id', response.get('orderId', '')),
+                market_id=market_id,
+                side=side,
+                price=price,
+                size=size,
+                filled_size=0,
+                status='OPEN',
+                nonce=nonce,
+                created_at=datetime.now(),
+                expires_at=datetime.now()
+            )
+            
+        except Exception as e:
+            logger.error(f"Error placing limit order: {e}")
+            raise
+    
+    async def place_market_order(
+        self,
+        market_id: str,
+        side: str,
+        size: float,
+        price: float
+    ) -> Order:
+        """
+        Place a market order for fast execution.
+        
+        Args:
+            market_id: Market ID
+            side: "BUY" or "SELL"
+            size: Size in USDC
+            price: Current price for sizing
+            
+        Returns:
+            Order object with order details
+        """
+        if self.paper_trading:
+            logger.info(f"[PAPER] Would place {side} market order: {size} USDC")
+            return self._create_paper_order(market_id, side, price, size, "MARKET")
+        
+        signed_order = self._build_market_order(
+            market_id=market_id,
+            side=side,
+            size=size,
+            price=price
+        )
+        
+        try:
+            response = await self.clob.post_order(signed_order)
+            
+            logger.info(f"Placed {side} market order: {size} USDC on {market_id}")
+            
+            return Order(
+                order_id=response.get('id', response.get('orderId', '')),
+                market_id=market_id,
+                side=side,
+                price=price,
+                size=size,
+                filled_size=size,
+                status='FILLED',
+                nonce=0,
+                created_at=datetime.now(),
+                expires_at=datetime.now()
+            )
+            
+        except Exception as e:
+            logger.error(f"Error placing market order: {e}")
+            raise
+    
+    async def cancel_order(self, order_id: str) -> bool:
+        """
+        Cancel an open order.
+        
+        Args:
+            order_id: ID of the order to cancel
+            
+        Returns:
+            True if cancellation successful
+        """
+        if self.paper_trading:
+            logger.info(f"[PAPER] Would cancel order: {order_id}")
+            return True
+        
+        try:
+            await self.clob.cancel_order(order_id)
+            logger.info(f"Cancelled order: {order_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error cancelling order {order_id}: {e}")
+            return False
+    
+    async def cancel_all_orders(self, market_id: Optional[str] = None) -> int:
+        """
+        Cancel all open orders, optionally for a specific market.
+        
+        Args:
+            market_id: Optional market ID to cancel orders for
+            
+        Returns:
+            Number of orders cancelled
+        """
+        if self.paper_trading:
+            logger.info(f"[PAPER] Would cancel all orders for market: {market_id}")
+            return 0
+        
+        try:
+            # Get open orders
+            orders = await self.get_open_orders()
+            
+            if market_id:
+                orders = [o for o in orders if o.market_id == market_id]
+            
+            for order in orders:
+                await self.cancel_order(order.order_id)
+            
+            logger.info(f"Cancelled {len(orders)} orders")
+            return len(orders)
+            
+        except Exception as e:
+            logger.error(f"Error cancelling orders: {e}")
+            return 0
+    
+    async def get_open_orders(self) -> List[Order]:
+        """
+        Get all open orders.
+        
+        Returns:
+            List of open Order objects
+        """
+        try:
+            orders_data = await self.clob.get_orders(
+                filter={'status': 'OPEN'}
+            )
+            
+            orders = []
+            for o in orders_data:
+                orders.append(Order(
+                    order_id=o.get('id', ''),
+                    market_id=o.get('market_id', ''),
+                    side=o.get('side', ''),
+                    price=float(o.get('price', 0)),
+                    size=float(o.get('size', 0)),
+                    filled_size=float(o.get('filled_size', 0)),
+                    status=o.get('status', 'OPEN'),
+                    nonce=int(o.get('nonce', 0)),
+                    created_at=datetime.fromtimestamp(o.get('created_at', time.time())),
+                    expires_at=datetime.fromtimestamp(o.get('expiration', time.time() + 86400))
+                ))
+            
+            return orders
+            
+        except Exception as e:
+            logger.error(f"Error getting open orders: {e}")
+            return []
+    
+    async def get_positions(self) -> List[Position]:
+        """
+        Get all open positions.
+        
+        Returns:
+            List of Position objects
+        """
+        try:
+            positions_data = await self.clob.get_positions()
+            
+            positions = []
+            for p in positions_data:
+                avg_price = float(p.get('avg_price', 0))
+                size = float(p.get('size', 0))
+                current_price = float(p.get('current_price', avg_price))
+                
+                positions.append(Position(
+                    market_id=p.get('market_id', ''),
+                    outcome=p.get('outcome', 'YES'),
+                    size=size,
+                    avg_price=avg_price,
+                    current_value=size * current_price,
+                    unrealized_pnl=size * (current_price - avg_price)
+                ))
+            
+            return positions
+            
+        except Exception as e:
+            logger.error(f"Error getting positions: {e}")
+            return []
+    
+    def _create_paper_order(
+        self,
+        market_id: str,
+        side: str,
+        price: float,
+        size: float,
+        order_type: str
+    ) -> Order:
+        """Create a paper trading order for simulation"""
+        return Order(
+            order_id=f"paper_{int(time.time() * 1000)}",
+            market_id=market_id,
+            side=side,
+            price=price,
+            size=size,
+            filled_size=0,
+            status='PENDING',
+            nonce=0,
+            created_at=datetime.now(),
+            expires_at=datetime.now()
+        )
+    
+    async def health_check(self) -> bool:
+        """
+        Check if the client can connect to the CLOB.
+        
+        Returns:
+            True if connection is healthy
+        """
+        try:
+            # Simple health check by getting the API status
+            await self.clob.get_markets(limit=1)
+            return True
+        except Exception as e:
+            logger.error(f"CLOB health check failed: {e}")
+            return False
+
+
+def create_polymarket_client(
+    config: BotConfig,
+    secrets: BotSecrets,
+    paper_trading: bool = False
+) -> PolymarketClient:
+    """
+    Factory function to create a Polymarket client.
+    
+    Args:
+        config: Bot configuration
+        secrets: Bot secrets
+        paper_trading: Use paper trading mode
+        
+    Returns:
+        Configured PolymarketClient instance
+    """
+    return PolymarketClient(
+        config=config,
+        secrets=secrets,
+        paper_trading=paper_trading
+    )
+

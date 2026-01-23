@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  weather-bot:
+    build: .
+    container_name: polymarket-weather-bot
+    environment:
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_SECRET_NAME=polymarket-bot/production
+      - LOG_LEVEL=INFO
+      # Override with paper trading for safety
+      - PYTHONPATH=/app
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ~/.aws:/root/.aws:ro  # For AWS credentials
+    restart: unless-stopped
+    command: ["python", "-m", "src.main", "--paper", "--config", "/app/config/config.yaml"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Optional: Prometheus metrics exporter
+  metrics:
+    image: prom/node-exporter:latest
+    container_name: bot-metrics
+    ports:
+      - "9090:9090"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+
