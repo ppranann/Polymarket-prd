@@ -218,11 +218,7 @@ def create_polymarket_client(
     Returns:
         Configured PolymarketClient
     """
-    api_key = None
-    if secrets:
-        api_key = (
-            api_key = secrets.polymarket_api_key
-        )
+    api_key = secrets.polymarket_api_key if secrets else None
     
     return PolymarketClient(
         config=config,
