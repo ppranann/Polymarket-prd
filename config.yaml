@@ -1,129 +1,61 @@
-# Polymarket Weather Sniping Bot - Configuration
-# ===============================================
+# Polymarket Weather Sniping Bot - Configuration 2026
+# ===================================================
 
-# Polymarket Configuration
 polymarket:
-  chain_id: 137  # Polygon mainnet
+  chain_id: 137
   api_url: https://clob.polymarket.com
   api_key: ${POLYMARKET_API_KEY}
-  # Contract addresses (Polymarket CLOB)
   clob_contract_address: "0x4b13c5378b5e7c8c2c2a8e7c3a4d9e2f1b5c8d3a"
 
-# Tomorrow.io Weather API Configuration
 tomorrow_io:
   api_key: ${TOMORROW_IO_API_KEY}
   base_url: https://api.tomorrow.io/v4
-  # Default location (can be overridden per market)
-  default_location:
-    lat: 40.7128  # New York City
-    lon: -74.0060
-  # Request settings
-  fields:
-    - temperature
-    - temperatureApparent
-    - temperatureMin
-    - temperatureMax
-    - precipitationProbability
-    - weatherCode
+  units: metric # CRITICAL: Seoul and London stations report in Celsius
+  fields: [temperature, temperatureApparent, temperatureMin, temperatureMax, precipitationProbability]
   timesteps: 1h
-  units: imperial
 
-# AWS Secrets Manager Configuration
-aws:
-  region: us-east-1
-  secret_name: polymarket-bot/production
-  # Alternative: Use local .env file for development
-  use_env_file: true
-  env_file_path: .env
-
-# Risk Parameters
 risk:
-  initial_capital: 30.0            # Starting capital in USD ($30 deposited)
-  max_trade_size: 1.50             # Maximum per-event position (5% of capital)
-  max_daily_loss: 2.00             # Stop trading if exceeded (~$7 max loss)
-  max_open_positions: 3            # Diversification limit (smaller for $30)
-  position_concentration: 0.20     # Max 20% concentration
-  profit_target: 1.0               # 100% profit = auto-exit
+  initial_capital: 30.0            # Your $30 bankroll
+  max_trade_size: 3.00             # 10% of capital ($3 minimum for Rewards)
+  max_daily_loss: 4.50             # 15% hard circuit breaker
+  max_open_positions: 3            # Quality over quantity
+  position_concentration: 0.20
+  profit_target: 1.0
 
-# Farming Parameters (Liquidity Rewards)
-farming:
-  enabled: true
-  price_threshold: 0.10           # Farm when YES price < $0.10
-  max_spread: 0.02                # Spread between buy/sell orders
-  farming_size: 1.50              # Size per liquidity order (adjusted for $30)
-  # 2026 Adjusted Midpoint Farming
-  rebalance_interval: 60          # Rebalance orders every 60 seconds max
-  midpoint_movement_threshold: 0.005  # Rebalance if midpoint moves > 0.5%
-  blue_zone_buffer: 0.01          # Stay within 1% of midpoint for rewards
-
-# Scanner Parameters
 scanner:
-  scan_interval: 30               # Seconds between price scans (free, no limit)
-  price_threshold: 0.15           # Scan YES price < $0.15
+  scan_interval: 30
+  price_threshold: 0.80           # TEST VALUE: High enough to "see" markets
   categories:
     - weather
     - temperature
     - precipitation
-  # Market filters
+    - global                      # Essential for non-US markets
+    - science
   filters:
     active: true
-    liquidity_rewards_only: true  # Only Blue Clock markets
-  # Lazy API Settings (save Tomorrow.io credits)
-  weather_cache_ttl: 900          # Cache weather for 15 minutes (900 seconds)
-  snipe_price_threshold: 0.15     # Only fetch weather for markets < $0.15
-  min_weather_update_interval: 15 # Minimum minutes between weather API calls
+    liquidity_rewards_only: false # Set to false to verify "Discovery" works
+  keywords:
+    - Seoul
+    - London
+    - Incheon
+    - Heathrow
+    - Temperature
+    - Rain
+  weather_cache_ttl: 900
+  snipe_price_threshold: 0.80     # Match scanner for testing
 
-# Alpha Snipe Parameters
 alpha:
   enabled: true
-  threshold: 0.20                 # 20% undervaluation = alpha signal
-  size_multiplier_max: 3.0        # Max 3x position size increase
+  threshold: 0.15                 # 15% edge is a solid signal
 
-# Logging and Monitoring
 logging:
-  level: INFO                     # DEBUG, INFO, WARNING, ERROR
+  level: INFO
   format: json
-  # Supabase configuration
   supabase:
     url: ${SUPABASE_URL}
     key: ${SUPABASE_KEY}
     table_prefix: polymarket_
-  # Local logging
-  local:
-    enabled: true
-    log_dir: logs
-    max_file_size_mb: 10
-    backup_count: 5
 
-# Health Check and Alerts
-health:
-  enabled: true
-  check_interval: 60              # Seconds
-  # Webhook alerts (e.g., Discord, Slack)
-  webhook:
-    url: ${WEBHOOK_URL}
-    enabled: false
-  # Critical alerts
-  alerts:
-    on_trade: true
-    on_error: true
-    on_profit: true
-    on_loss: true
-
-# Execution Settings
-execution:
-  order_timeout: 30               # Seconds to wait for order fill
-  retry_attempts: 3
-  retry_delay: 1                  # Seconds
-  # EIP-712 signing
-  signing:
-    method: eip712
-    domain_name: Polymarket CLOB
-    domain_version: 1.0
-
-# Development Settings
 development:
-  dry_run: false                  # If true, don't actually trade
-  paper_trading: true             # Simulate with fake orders
-  log_all_requests: false         # Debug: log every API call
-
+  dry_run: false
+  paper_trading: true             # Keep simulated for the final Saturday test
