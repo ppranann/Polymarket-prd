@@ -55,14 +55,20 @@ class AlphaConfig:
 
 @dataclass
 class ScannerConfig:
-    """Market scanner parameters with Lazy API (save credits)"""
+    # Basic Thresholds
     price_threshold: float = 0.85
     snipe_price_threshold: float = 0.85
+    
+    # Timing
     scan_interval: int = 30
     weather_cache_ttl: int = 900
-    # Use default_factory for the list to keep the dataclass happy
+    min_weather_update_interval: int = 300  # <--- Added this to fix the error
+    
+    # Lists (Using default_factory for safety)
     categories: list = field(default_factory=lambda: ['weather', 'temperature', 'global', 'science'])
     keywords: list = field(default_factory=lambda: ['Seoul', 'London', 'Incheon', 'Heathrow'])
+    
+    # Dictionaries
     filters: dict = field(default_factory=lambda: {"active": True, "liquidity_rewards_only": False})
 
 
