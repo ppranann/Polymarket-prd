@@ -137,7 +137,10 @@ class PolymarketClient:
                     return []
                 
                 result = await response.json()
-                markets = result.get('data', [])
+                if isinstance(result, list):
+                    markets = result
+                else:
+                    markets = result.get('data', [])
                 
                 logger.info(f"Gamma API returned {len(markets)} weather markets (tag_id=100381)")
                 return markets
