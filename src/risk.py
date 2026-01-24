@@ -28,6 +28,8 @@ class Position:
     current_price: float  # Current market price
     opened_at: datetime
     last_updated: datetime
+    peak_pnl_percentage: float = 0.0  # Track peak profit for trailing stop
+    entry_alpha: float = 0.0  # Alpha signal strength when entering
     
     @property
     def current_value(self) -> float:
@@ -225,7 +227,8 @@ class RiskManager:
         market_id: str,
         outcome: str,
         size: float,
-        price: float
+        price: float,
+        entry_alpha: float = 0.0
     ) -> Position:
         """
         Open a new position and track it.
@@ -235,6 +238,7 @@ class RiskManager:
             outcome: "YES" or "NO"
             size: Position size in USDC
             price: Entry price
+            entry_alpha: Alpha signal strength when entering
             
         Returns:
             New Position object
@@ -246,7 +250,9 @@ class RiskManager:
             avg_price=price,
             current_price=price,
             opened_at=datetime.now(),
-            last_updated=datetime.now()
+            last_updated=datetime.now(),
+            peak_pnl_percentage=0.0,
+            entry_alpha=entry_alpha
         )
         
         self._positions[market_id] = position
@@ -256,7 +262,7 @@ class RiskManager:
         stats.trades_count += 1
         stats.total_volume += size
         
-        logger.info(f"Opened position: {outcome} {size} @ ${price} on {market_id}")
+        logger.info(f"Opened position: {outcome} {size} @ ${price} on {market_id} (alpha={entry_alpha:.0%})")
         
         return position
     
@@ -282,10 +288,15 @@ class RiskManager:
         position.current_price = current_price
         position.last_updated = datetime.now()
         
+        # Track peak PnL for trailing stop
+        if position.pnl_percentage > position.peak_pnl_percentage:
+            position.peak_pnl_percentage = position.pnl_percentage
+        
         # Check for profit target (100% = auto-exit)
         if position.pnl_percentage >= (self.risk.profit_target * 100):
             logger.info(
-                f"Position {market_id} hit profit target: {position.pnl_percentage:.1f}%"
+                f"Position {market_id} hit profit target: {position.pnl_percentage:.1f}% "
+                f"(peak: {position.peak_pnl_percentage:.1f}%)"
             )
         
         return position

@@ -89,6 +89,11 @@ class AutoExitManager:
         """
         Check all positions for exit conditions.
         
+        Exit Logic:
+        1. PROFIT_TAKE: Exit at 100% profit (configurable)
+        2. TRAILING_STOP: Exit if profit drops 20% from peak (salvage mode)
+        3. RISK_EXIT: Exit if position moves strongly against prediction
+        
         Args:
             positions: Dictionary of market_id -> Position
             current_prices: Dictionary of market_id -> current price
@@ -104,10 +109,10 @@ class AutoExitManager:
             if current_price is None:
                 continue
             
-            # Update position with current price
+            # Update position with current price (also updates peak_pnl)
             self.risk.update_position(market_id, current_price)
             
-            # Check profit target
+            # Check 1: Profit target (e.g., 100%)
             if position.pnl_percentage >= (self.profit_target * 100):
                 signal = self._create_exit_signal(
                     position=position,
@@ -116,17 +121,34 @@ class AutoExitManager:
                     reason=f"Profit target reached: {position.pnl_percentage:.1f}%"
                 )
                 exit_signals.append(signal)
+                continue
             
-            # Optional: Check for stop loss (e.g., -50%)
-            # Uncomment if you want stop-loss functionality
-            # elif position.pnl_percentage <= -50:
-            #     signal = self._create_exit_signal(
-            #         position=position,
-            #         current_price=current_price,
-            #         exit_type="STOP_LOSS",
-            #         reason=f"Stop loss triggered: {position.pnl_percentage:.1f}%"
-            #     )
-            #     exit_signals.append(signal)
+            # Check 2: Trailing stop - salvage profits if they drop 20% from peak
+            # E.g., if we were at 80% profit and now at 60%, exit to lock in 60%
+            if position.pnl_percentage >= 30 and position.peak_pnl_percentage >= 70:
+                drop_from_peak = position.peak_pnl_percentage - position.pnl_percentage
+                if drop_from_peak >= 20:  # Dropped 20%+ from peak
+                    signal = self._create_exit_signal(
+                        position=position,
+                        current_price=current_price,
+                        exit_type="TRAILING_STOP",
+                        reason=f"Trailing stop: {position.pnl_percentage:.1f}% (peak was {position.peak_pnl_percentage:.1f}%, drop: -{drop_from_peak:.1f}%)"
+                    )
+                    exit_signals.append(signal)
+                    continue
+            
+            # Check 3: RISK_EXIT - Market moved strongly against prediction
+            # If we entered with high alpha confidence but position is losing
+            if position.entry_alpha > 0.30:  # We entered with high confidence
+                if position.pnl_percentage < -15:  # But now down 15%+
+                    signal = self._create_exit_signal(
+                        position=position,
+                        current_price=current_price,
+                        exit_type="RISK_EXIT",
+                        reason=f"Risk exit: Entry alpha {position.entry_alpha:.0%} but position down {position.pnl_percentage:.1f}%"
+                    )
+                    exit_signals.append(signal)
+                    continue
         
         return exit_signals
     

@@ -186,7 +186,8 @@ class OrderExecutor:
             return await self._farm_liquidity_adjusted(
                 market=market,
                 current_price=current_price,
-                size=size
+                size=size,
+                entry_alpha=alpha
             )
         else:
             # Regular mode: place single order
@@ -194,14 +195,17 @@ class OrderExecutor:
                 market=market,
                 side=action,
                 price=current_price,
-                size=size
+                size=size,
+                post_only=True,
+                entry_alpha=alpha
             )
     
     async def _farm_liquidity_adjusted(
         self,
         market: Market,
         current_price: float,
-        size: float
+        size: float,
+        entry_alpha: float = 0.0
     ) -> ExecutionResult:
         """
         Farm Liquidity Rewards using Adjusted Midpoint strategy.
@@ -222,6 +226,7 @@ class OrderExecutor:
             market: Market to farm
             current_price: Current market price
             size: Size per order
+            entry_alpha: Alpha signal strength when entering
             
         Returns:
             ExecutionResult with farming details
@@ -506,7 +511,8 @@ class OrderExecutor:
         side: str,
         price: float,
         size: float,
-        post_only: bool = True
+        post_only: bool = True,
+        entry_alpha: float = 0.0
     ) -> ExecutionResult:
         """
         Place a single order.
@@ -517,6 +523,7 @@ class OrderExecutor:
             price: Order price
             size: Position size
             post_only: Use Post-Only order (maker)
+            entry_alpha: Alpha signal strength when entering
             
         Returns:
             ExecutionResult with order details
@@ -538,6 +545,16 @@ class OrderExecutor:
             
             # Track order
             self._recent_orders[order.order_id] = datetime.now()
+            
+            # Track position in risk manager (for BUY orders)
+            if side == "BUY":
+                self.risk.open_position(
+                    market_id=market.id,
+                    outcome="YES",
+                    size=size,
+                    price=price,
+                    entry_alpha=entry_alpha
+                )
             
             return ExecutionResult(
                 success=True,
