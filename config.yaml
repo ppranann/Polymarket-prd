@@ -13,6 +13,9 @@ tomorrow_io:
   units: metric # CRITICAL: Seoul and London stations report in Celsius
   fields: [temperature, temperatureApparent, temperatureMin, temperatureMax, precipitationProbability]
   timesteps: 1h
+  default_location:
+    lat: 37.5665  # Seoul
+    lon: 126.9780
 
 risk:
   initial_capital: 30.0
