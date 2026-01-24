@@ -174,9 +174,13 @@ class MarketScanner:
             # Get current prices for all markets (free polling)
             prices = await self._get_current_prices(all_markets)
             
-            # DEBUG: Log all market titles
+            # DEBUG: Log ALL markets with their titles and descriptions
             for market in all_markets:
-                logger.debug(f"DEBUG: Found Market - {market.question[:100]} | Active: {market.active} | Price: ${market.yes_price:.4f}")
+                # Try multiple fields in case the Gamma object structure changed
+                title = getattr(market, 'question', '') or getattr(market, 'title', '') or "Unknown Title"
+                description = getattr(market, 'description', '')
+                
+                logger.info(f"DEBUG: Found Market - Title: '{title}' | Desc: '{description[:50]}...' | Price: ${market.yes_price:.4f}")
             
             # Filter for qualifying markets
             for market in all_markets:
