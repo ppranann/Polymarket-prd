@@ -109,7 +109,7 @@ class MarketScanner:
         # Configurable intervals
         self._price_poll_interval = 30  # Poll prices every 30 seconds (free)
         self._weather_cache_ttl = 15 * 60  # 15 minutes cache for weather
-        self._snipe_price_threshold = 0.15  # Only fetch weather for < $0.15
+        self._snipe_price_threshold = config.get('scanner', {}).get('snipe_price_threshold', 0.15)
     
     async def scan(
         self,
@@ -457,18 +457,21 @@ class MarketScanner:
     async def find_blue_clock_markets(
         self,
         min_price: float = 0.01,
-        max_price: float = 0.15
+        max_price: float = None
     ) -> List[Market]:
         """
         Find markets with active Liquidity Rewards (Blue Clock).
         
         Args:
             min_price: Minimum price
-            max_price: Maximum price
+            max_price: Maximum price (defaults to snipe_price_threshold from config)
             
         Returns:
             List of qualifying markets
         """
+        # Use config default if not specified
+        if max_price is None:
+            max_price = self.scanner_config.snipe_price_threshold
         result = await self.scan(
             price_threshold=max_price,
             require_liquidity_rewards=True

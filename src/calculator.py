@@ -416,7 +416,8 @@ class FairPriceCalculator:
         self,
         fair_price: float,
         market_price: float,
-        threshold: float = 0.15
+        alpha_threshold: float = 0.15,
+        snipe_price_threshold: float = 0.15
     ) -> bool:
         """
         Check if a market is underpriced.
@@ -424,13 +425,14 @@ class FairPriceCalculator:
         Args:
             fair_price: Calculated fair price
             market_price: Current market price
-            threshold: Minimum alpha threshold
+            alpha_threshold: Minimum alpha threshold
+            snipe_price_threshold: Maximum price threshold for sniping
             
         Returns:
             True if market is underpriced
         """
         alpha = self._calculate_alpha(fair_price, market_price)
-        return alpha > threshold and market_price < 0.15
+        return alpha > alpha_threshold and market_price < snipe_price_threshold
     
     def is_overpriced(
         self,
