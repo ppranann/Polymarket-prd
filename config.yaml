@@ -15,25 +15,25 @@ tomorrow_io:
   timesteps: 1h
 
 risk:
-  initial_capital: 30.0            # Your $30 bankroll
-  max_trade_size: 3.00             # 10% of capital ($3 minimum for Rewards)
-  max_daily_loss: 4.50             # 15% hard circuit breaker
-  max_open_positions: 3            # Quality over quantity
+  initial_capital: 30.0
+  max_trade_size: 3.00             # Increased to $3 for Reward eligibility
+  max_daily_loss: 4.50
+  max_open_positions: 3
   position_concentration: 0.20
   profit_target: 1.0
 
 scanner:
   scan_interval: 30
-  price_threshold: 0.80           # TEST VALUE: High enough to "see" markets
+  price_threshold: 0.85            # RAISE THIS to 0.85 so we can see all markets
   categories:
     - weather
     - temperature
     - precipitation
-    - global                      # Essential for non-US markets
-    - science
+    - global                       # ADD THIS: Incheon/London are often here
+    - science                      # ADD THIS: Some weather is under science
   filters:
     active: true
-    liquidity_rewards_only: false # Set to false to verify "Discovery" works
+    liquidity_rewards_only: false  # SET TO FALSE for testing discovery
   keywords:
     - Seoul
     - London
