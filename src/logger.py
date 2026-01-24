@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AuditLog:
     """Represents an audit log entry"""
-    id: Optional[str] = None
-    created_at: Optional[datetime] = None
     event_type: str  # SCAN, TRADE, DECISION, ERROR, REWARD, EXIT
     market_id: Optional[str] = None
+    id: Optional[str] = None
+    created_at: Optional[datetime] = None
     action: Optional[str] = None
     fair_price: Optional[float] = None
     market_price: Optional[float] = None
@@ -59,10 +59,10 @@ class AuditLog:
 @dataclass
 class RewardLog:
     """Represents a liquidity reward log entry"""
-    id: Optional[str] = None
-    created_at: Optional[datetime] = None
     market_id: str
     usdc_earned: float
+    id: Optional[str] = None
+    created_at: Optional[datetime] = None
     order_ids: List[str]
     order_type: str  # FARMING, REGULAR
     duration_hours: Optional[float] = None
