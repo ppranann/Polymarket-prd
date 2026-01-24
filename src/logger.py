@@ -61,10 +61,10 @@ class RewardLog:
     """Represents a liquidity reward log entry"""
     market_id: str
     usdc_earned: float
-    id: Optional[str] = None
-    created_at: Optional[datetime] = None
     order_ids: List[str]
     order_type: str  # FARMING, REGULAR
+    id: Optional[str] = None
+    created_at: Optional[datetime] = None
     duration_hours: Optional[float] = None
     
     def to_dict(self) -> Dict:
