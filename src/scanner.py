@@ -109,8 +109,8 @@ class MarketScanner:
         # Configurable intervals
         self._price_poll_interval = 30  # Poll prices every 30 seconds (free)
         self._weather_cache_ttl = 15 * 60  # 15 minutes cache for weather
-        self._snipe_price_threshold = config.get('scanner', {}).get('snipe_price_threshold', 0.15)
-    
+        self._snipe_price_threshold = config.scanner.snipe_price_threshold
+        
     async def scan(
         self,
         categories: Optional[List[str]] = None,

@@ -62,7 +62,8 @@ class ScannerConfig:
     filters: Dict[str, Any]
     # Lazy API Settings
     weather_cache_ttl: int = 900  # 15 minutes
-    snipe_price_threshold: float = 0.15
+    snipe_price_threshold: float = 0.85
+    price_threshold: float = 0.85
     min_weather_update_interval: int = 15  # minutes
 
 
