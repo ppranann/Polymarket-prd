@@ -25,20 +25,23 @@ class Market:
     @classmethod
     def from_gamma_event(cls, event: Dict) -> 'Market':
         """Create Market from Gamma API event response"""
+        # 1. Extract labels safely BEFORE calling the constructor
+        raw_tags = event.get('tags', [])
+        tag_labels = [t.get('label', '') if isinstance(t, dict) else str(t) for t in raw_tags]
+        category_str = ','.join(tag_labels) or event.get('category', 'unknown')
+
+        # 2. Now return the Market object
         return cls(
             id=event.get('id', ''),
             question=event.get('question', ''),
-            condition_id=event.get('id', ''),  # Gamma event ID maps to condition_id
+            condition_id=event.get('id', ''), 
             tokens=[],
             last_trade_price=float(event.get('volume', 0) or 0) / 1000 if event.get('volume') else 0.5,
             active=not event.get('closed', False) and not event.get('archived', False),
-            yes_price=0.5,  # Default price
+            yes_price=0.5,
             no_price=0.5,
-            # Extract the 'label' from each tag dictionary instead of the whole dict
-            tags = event.get('tags', []),
-            tag_labels = [t.get('label', '') if isinstance(t, dict) else str(t) for t in tags],
-            category = ','.join(tag_labels) or event.get('category', ''),
-            liquidity_rewards_enabled=event.get('active', True),  # Approximate
+            category=category_str, # Using the variable we just created
+            liquidity_rewards_enabled=event.get('active', True),
             volume=float(event.get('volume', 0) or 0)
         )
 
