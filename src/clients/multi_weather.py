@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import aiohttp
 
 from ..config import BotConfig
-from .clients.tomorrow_io import WeatherData, TomorrowIOClient
+from .tomorrow_io import WeatherData, TomorrowIOClient
 
 logger = logging.getLogger(__name__)
 
