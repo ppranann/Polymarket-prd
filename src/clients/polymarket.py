@@ -112,11 +112,10 @@ class PolymarketClient:
             chain_id=config.chain_id
         )
         
-        # Initialize CLOB client
-        # Note: py-clob-client API changed - no 'secret' parameter
+        # Initialize CLOB client with private key for signing
         self.clob = ClobClient(
             host=config.api_url,
-            key=secrets.polymarket_api_key,
+            key=secrets.polygon_private_key,
             chain_id=config.chain_id
         )
         
@@ -617,7 +616,7 @@ class PolymarketClient:
         """
         try:
             # Simple health check by getting the API status
-            await self.clob.get_markets(limit=1)
+            await self.clob.get_markets()
             return True
         except Exception as e:
             logger.error(f"CLOB health check failed: {e}")
