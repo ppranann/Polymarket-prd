@@ -235,7 +235,8 @@ class ConfigLoader:
         config = self.load()
         
         # Parse nested configurations
-        default_loc = config['tomorrow_io']['default_location']
+        tomorrow_cfg = config.get('tomorrow_io', {})
+        default_loc = tomorrow_cfg.get('default_location', 'Seoul')
         
         risk_cfg = config['risk']
         farming_cfg = config['farming']

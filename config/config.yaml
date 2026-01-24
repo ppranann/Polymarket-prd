@@ -13,10 +13,6 @@ polymarket:
 tomorrow_io:
   api_key: ${TOMORROW_IO_API_KEY}
   base_url: https://api.tomorrow.io/v4
-  # Default location (can be overridden per market)
-  default_location:
-    lat: 40.7128  # New York City
-    lon: -74.0060
   # Request settings
   fields:
     - temperature
@@ -26,7 +22,11 @@ tomorrow_io:
     - precipitationProbability
     - weatherCode
   timesteps: 1h
-  units: imperial
+  units: metrics
+  # Default location for weather data (Seoul, South Korea)
+  default_location:
+    lat: 37.5665
+    lon: 126.9780
 
 # AWS Secrets Manager Configuration
 aws:
