@@ -34,7 +34,10 @@ class Market:
             active=not event.get('closed', False) and not event.get('archived', False),
             yes_price=0.5,  # Default price
             no_price=0.5,
-            category=','.join(event.get('tags', [])) or event.get('category', ''),
+            # Extract the 'label' from each tag dictionary instead of the whole dict
+            tags = event.get('tags', []),
+            tag_labels = [t.get('label', '') if isinstance(t, dict) else str(t) for t in tags],
+            category = ','.join(tag_labels) or event.get('category', ''),
             liquidity_rewards_enabled=event.get('active', True),  # Approximate
             volume=float(event.get('volume', 0) or 0)
         )
