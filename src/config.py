@@ -63,6 +63,7 @@ class ScannerConfig:
     # Use default_factory for the list to keep the dataclass happy
     categories: list = field(default_factory=lambda: ['weather', 'temperature', 'global', 'science'])
     keywords: list = field(default_factory=lambda: ['Seoul', 'London', 'Incheon', 'Heathrow'])
+    filters: dict = field(default_factory=lambda: {"active": True, "liquidity_rewards_only": False})
 
 
 @dataclass
