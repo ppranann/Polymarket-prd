@@ -25,22 +25,34 @@ class Market:
     @classmethod
     def from_gamma_event(cls, event: Dict) -> 'Market':
         """Create Market from Gamma API event response"""
-        # 1. Extract labels safely BEFORE calling the constructor
+        # 1. Get the actual prices from Gamma (they come as a stringified list)
+        outcome_prices = event.get('outcomePrices', ['0.5', '0.5'])
+        
+        # Convert strings to floats safely
+        try:
+            yes_p = float(outcome_prices[0])
+            no_p = float(outcome_prices[1])
+        except (IndexError, ValueError):
+            yes_p, no_p = 0.5, 0.5
+
+        # 2. Extract labels safely
         raw_tags = event.get('tags', [])
         tag_labels = [t.get('label', '') if isinstance(t, dict) else str(t) for t in raw_tags]
         category_str = ','.join(tag_labels) or event.get('category', 'unknown')
 
-        # 2. Now return the Market object
+        # 3. Get title from 'title' or 'question'
+        title_str = event.get('title') or event.get('question') or "Unknown"
+
         return cls(
             id=event.get('id', ''),
-            question=event.get('question', ''),
-            condition_id=event.get('id', ''), 
+            question=title_str,
+            condition_id=event.get('conditionId', event.get('id', '')), 
             tokens=[],
-            last_trade_price=float(event.get('volume', 0) or 0) / 1000 if event.get('volume') else 0.5,
+            yes_price=yes_p, # Real price from outcomePrices!
+            no_price=no_p,   # Real price from outcomePrices!
+            last_trade_price=yes_p,
             active=not event.get('closed', False) and not event.get('archived', False),
-            yes_price=0.5,
-            no_price=0.5,
-            category=category_str, # Using the variable we just created
+            category=category_str,
             liquidity_rewards_enabled=event.get('active', True),
             volume=float(event.get('volume', 0) or 0)
         )
