@@ -58,28 +58,20 @@ farming:
 
 # Scanner Parameters
 scanner:
-  scan_interval: 30               # Seconds between price scans (free, no limit)
+  scan_interval: 30               # Seconds between price scans
   price_threshold: 0.85           # Scan YES price < $0.85
-  categories:
-    - weather
-    - temperature
-    - precipitation
-    - global
-    - science
-    - climate
-  # Keywords for filtering weather markets
+  categories: []
+  # Keywords for filtering weather markets (Wide Net approach)
   keywords:
-    - Seoul
-    - London
-    - Heathrow
-    - NYC
-    - JFK
-    - Incheon
-    - Korea
-    - Temperature
-    - Rain
-    - Snow
-    - Precipitation
+    - "Seoul"
+    - "NYC"
+    - "London"
+    - "Heathrow"
+    - "Temperature"
+    - "Snow"
+    - "Rain"
+    - "°C"
+    - "Korea"
   # Market filters
   filters:
     active: true

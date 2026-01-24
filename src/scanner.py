@@ -150,26 +150,15 @@ class MarketScanner:
         logger.info(f"Categories: {cats}, Price threshold: ${threshold:.4f}")
         
         try:
-            # Scan each category
-            for category in cats:
-                try:
-                    market_dicts = await self.client.get_markets(
-                        category=category,
-                        active=True,
-                        limit=100
-                    )
-                    
-                    # Convert Gamma API response to Market objects
-                    for m in market_dicts:
-                        market = Market.from_gamma_event(m)
-                        all_markets.append(market)
-                    
-                    logger.debug(f"Found {len(market_dicts)} markets in {category}")
-                    
-                except Exception as e:
-                    error = f"Error scanning category '{category}': {str(e)}"
-                    logger.error(error)
-                    errors.append(error)
+            # Scan for markets (now uses the simplified get_markets())
+            market_dicts = await self.client.get_markets()
+            
+            # Convert Gamma API response to Market objects
+            for m in market_dicts:
+                market = m  # Already a Market object from get_markets()
+                all_markets.append(market)
+            
+            logger.debug(f"Found {len(market_dicts)} markets from Gamma API")
             
             # Get current prices for all markets (free polling)
             prices = await self._get_current_prices(all_markets)

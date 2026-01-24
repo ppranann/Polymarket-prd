@@ -22,41 +22,6 @@ class Market:
     liquidity_rewards_enabled: bool = False
     volume: float = 0.0
 
-    @classmethod
-    def from_gamma_event(cls, event: Dict) -> 'Market':
-        """Create Market from Gamma API event response"""
-        # 1. Get the actual prices from Gamma (they come as a stringified list)
-        outcome_prices = event.get('outcomePrices', ['0.5', '0.5'])
-        
-        # Convert strings to floats safely
-        try:
-            yes_p = float(outcome_prices[0])
-            no_p = float(outcome_prices[1])
-        except (IndexError, ValueError):
-            yes_p, no_p = 0.5, 0.5
-
-        # 2. Extract labels safely
-        raw_tags = event.get('tags', [])
-        tag_labels = [t.get('label', '') if isinstance(t, dict) else str(t) for t in raw_tags]
-        category_str = ','.join(tag_labels) or event.get('category', 'unknown')
-
-        # 3. Get title from 'title' or 'question'
-        title_str = event.get('title') or event.get('question') or "Unknown"
-
-        return cls(
-            id=event.get('id', ''),
-            question=title_str,
-            condition_id=event.get('conditionId', event.get('id', '')), 
-            tokens=[],
-            yes_price=yes_p, # Real price from outcomePrices!
-            no_price=no_p,   # Real price from outcomePrices!
-            last_trade_price=yes_p,
-            active=not event.get('closed', False) and not event.get('archived', False),
-            category=category_str,
-            liquidity_rewards_enabled=event.get('active', True),
-            volume=float(event.get('volume', 0) or 0)
-        )
-
 @dataclass
 class Order:
     order_id: str
@@ -110,65 +75,43 @@ class PolymarketClient:
             logger.error(f"Health check failed: {e}")
             return False
 
-    async def get_markets(
-        self,
-        category: str = None,
-        filter: str = None,
-        active: bool = True,
-        limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        """
-        Fetch markets from Gamma API.
-        
-        Uses tag_id for 2026 weather markets (100381 = Weather/Climate).
-        
-        Args:
-            category: Category filter (maps to tags in Gamma API)
-            filter: Alternative filter name
-            active: Only return active markets
-            limit: Maximum number of markets to return
-            
-        Returns:
-            List of market dictionaries from Gamma API
-        """
+    async def get_markets(self):
+        """Fetches a broad list of active markets for the scanner to filter."""
+        # We switch to /markets to get flat, easy-to-read data
+        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=100&order=volume&ascending=false"
         try:
-            session = await self._get_session()
-            
-            # 2026: Use tag_id for specific weather markets
-            # tag_id 100381 = Weather/Climate category
-            params = {
-                "limit": min(limit, 100),
-                "active": str(active).lower(),
-                "closed": "false",
-                "archived": "false",
-                "tag_id": "100381"  # Weather/Climate tag for 2026
-            }
-            
-            async with session.get(
-                f"{self.GAMMA_URL}/events",
-                params=params
-            ) as response:
-                
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"Gamma API error: {response.status} - {error_text[:200]}")
-                    return []
-                
-                result = await response.json()
-                if isinstance(result, list):
-                    markets = result
-                else:
-                    markets = result.get('data', [])
-                
-                logger.info(f"Gamma API returned {len(markets)} weather markets (tag_id=100381)")
-                return markets
-                
-        except aiohttp.ClientError as e:
-            logger.error(f"Gamma API request failed: {e}")
-            return []
+            async with self._session.get(url) as resp:
+                data = await resp.json()
+                # Handle both list and dict responses
+                raw_markets = data if isinstance(data, list) else data.get('data', [])
+                logger.info(f"Gamma API /markets returned {len(raw_markets)} markets")
+                return [self.from_gamma_event(m) for m in raw_markets]
         except Exception as e:
             logger.error(f"Error fetching markets: {e}")
             return []
+
+    @classmethod
+    def from_gamma_event(cls, event: dict) -> 'Market':
+        # 1. Extract the REAL prices (Gamma returns them as a stringified list)
+        prices = event.get('outcomePrices', ['0.5', '0.5'])
+        yes_p = float(prices[0]) if prices else 0.5
+        
+        # 2. Get the real title and description
+        title = event.get('question') or event.get('title') or "Unknown"
+        desc = event.get('description', '')
+
+        return cls(
+            id=event.get('id', ''),
+            question=title,
+            description=desc,
+            condition_id=event.get('conditionId', ''),
+            yes_price=yes_p,
+            no_price=1.0 - yes_p,
+            last_trade_price=yes_p,
+            active=not event.get('closed', False),
+            category=event.get('category', 'general'),
+            volume=float(event.get('volume', 0) or 0)
+        )
 
     async def get_market(self, market_id: str) -> Optional[Dict[str, Any]]:
         """Get a single market by ID"""
