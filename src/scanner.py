@@ -152,13 +152,18 @@ class MarketScanner:
             # Scan each category
             for category in cats:
                 try:
-                    markets = await self.client.get_markets(
+                    market_dicts = await self.client.get_markets(
                         category=category,
                         active=True,
                         limit=100
                     )
-                    all_markets.extend(markets)
-                    logger.debug(f"Found {len(markets)} markets in {category}")
+                    
+                    # Convert Gamma API response to Market objects
+                    for m in market_dicts:
+                        market = Market.from_gamma_event(m)
+                        all_markets.append(market)
+                    
+                    logger.debug(f"Found {len(market_dicts)} markets in {category}")
                     
                 except Exception as e:
                     error = f"Error scanning category '{category}': {str(e)}"
