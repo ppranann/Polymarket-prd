@@ -17,19 +17,18 @@ from typing import Any, Dict, List, Optional
 
 from py_clob_client.client import ClobClient
 from py_clob_client.signer import Signer
-from py_clob_client.order_builder.constants import (
-    CHAIN_ID_POLYGON,
-    SIDE_BUY,
-    SIDE_SELL,
-    TIME_IN_FORCE_GTC,
-)
-from py_clob_client.order_builder.builders import (
-    MarketOrderBuilder,
-    LimitOrderBuilder,
-)
 
-from .config import BotConfig
-from .secrets_manager import BotSecrets
+# String constants
+SIDE_BUY = "buy"
+SIDE_SELL = "sell"
+TIME_IN_FORCE_GTC = "gtc"
+CHAIN_ID_POLYGON = 137
+
+import sys
+sys.path.insert(0, '/Users/ppranann/Documents/Polymarket-prd')
+
+from src.config import BotConfig
+from src.secrets_manager import BotSecrets
 
 logger = logging.getLogger(__name__)
 

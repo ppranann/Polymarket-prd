@@ -1,0 +1,131 @@
+ <parameter name="content">#!/bin/bash
+# Fix script for Polymarket bot - run on EC2
+
+set -e
+
+cd ~/Polymarket-prd
+
+echo "Stopping container..."
+docker-compose down || true
+
+echo "Backing up old polymarket.py..."
+cp src/clients/polymarket.py src/clients/polymarket.py.backup || true
+
+echo "Downloading fixed polymarket.py..."
+curl -s https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/Polymarket-prd/main/src/clients/polymarket.py -o src/clients/polymarket.py
+
+# If curl fails or you don't have GitHub access, use this inline version:
+if [ ! -s src/clients/polymarket.py ] || grep -q "order_builder.builders" src/clients/polymarket.py; then
+    echo "Using inline fixed version..."
+    cat > src/clients/polymarket.py << 'EOF'
+"""
+Polymarket CLOB Client Module
+"""
+import asyncio
+import logging
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from py_clob_client.client import ClobClient
+from py_clob_client.signer import Signer
+
+# String constants
+SIDE_BUY = "buy"
+SIDE_SELL = "sell"
+TIME_IN_FORCE_GTC = "gtc"
+CHAIN_ID_POLYGON = 137
+
+from src.config import BotConfig
+from src.secrets_manager import BotSecrets
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class Market:
+    id: str
+    question: str
+    condition_id: str
+    outcome: str
+    yes_price: float
+    no_price: float
+    active: bool
+    liquidity_rewards_enabled: bool
+    volume: float
+    category: str
+    creator: Optional[str] = None
+    closing_time: Optional[datetime] = None
+    metadata: Optional[Dict] = None
+
+@dataclass
+class Order:
+    order_id: str
+    market_id: str
+    side: str
+    price: float
+    size: float
+    filled_size: float
+    status: str
+    nonce: int
+
+@dataclass
+class Position:
+    market_id: str
+    outcome: str
+    size: float
+    avg_price: float
+    current_value: float = 0
+    unrealized_pnl: float = 0
+
+class PolymarketClient:
+    def __init__(self, config, secrets, paper_trading=False):
+        self.config = config
+        self.secrets = secrets
+        self.paper_trading = paper_trading
+        self.signer = Signer(
+            private_key=secrets.polygon_private_key,
+            chain_id=config.chain_id
+        )
+        self.clob = ClobClient(
+            host=config.api_url,
+            key=secrets.polymarket_api_key,
+            secret=secrets.polymarket_api_secret,
+            chain_id=config.chain_id,
+            funder=config.api_key
+        )
+        self._nonce_lock = asyncio.Lock()
+    
+    async def get_nonce(self):
+        async with self._nonce_lock:
+            return self.clob.get_nonce()
+    
+    async def get_price(self, market_id):
+        try:
+            price_data = await self.clob.get_price(market_id=market_id)
+            if price_data is None:
+                return 0.5
+            return max(0.01, min(0.99, float(price_data)))
+        except Exception as e:
+            logger.error(f"Error getting price: {e}")
+            return 0.5
+    
+    async def health_check(self):
+        try:
+            await self.clob.get_markets(limit=1)
+            return True
+        except:
+            return False
+
+def create_polymarket_client(config, secrets, paper_trading=False):
+    return PolymarketClient(config, secrets, paper_trading)
+EOF
+fi
+
+echo "Rebuilding and starting container..."
+docker-compose up -d --build
+
+echo "Checking logs..."
+docker-compose logs -f weather-bot
+</parameter>
+this
