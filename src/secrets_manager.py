@@ -2,7 +2,7 @@
 Secrets Manager Module
 ======================
 Handles secure retrieval of API keys and private keys from AWS Secrets Manager.
-Provides fallback to environment variables for development.
+Uses AWS recommended boto3 pattern.
 """
 
 import os
@@ -21,16 +21,16 @@ logger = logging.getLogger(__name__)
 class BotSecrets:
     """Container for all bot secrets"""
     # Polymarket
-    polygon_private_key: str
-    polymarket_api_key: str
-    polymarket_api_secret: str
+    polygon_private_key: str = ""
+    polymarket_api_key: str = ""
+    polymarket_api_secret: str = ""
     
     # Tomorrow.io
-    tomorrow_io_api_key: str
+    tomorrow_io_api_key: str = ""
     
-    # Supabase
-    supabase_url: str
-    supabase_service_key: str
+    # Supabase (optional - bot works without logging)
+    supabase_url: str = ""
+    supabase_service_key: str = ""
     
     # Webhook (optional)
     webhook_url: Optional[str] = None
@@ -40,154 +40,106 @@ class SecretsManager:
     """
     Secure secrets management using AWS Secrets Manager.
     
-    Falls back to environment variables if AWS is unavailable
-    or if USE_ENV_FILE is configured.
+    Uses AWS recommended boto3 pattern:
+    https://aws.amazon.com/developer/language/python/
     """
     
     def __init__(
         self,
         secret_name: str = "polymarket-bot/production",
-        region: str = "us-east-1",
-        use_env_fallback: bool = True
+        region_name: str = "us-east-1"
     ):
         self.secret_name = secret_name
-        self.region = region
-        self.use_env_fallback = use_env_fallback
-        self._secrets: Optional[BotSecrets] = None
-        self._boto3_client = None
+        self.region_name = region_name
     
-    def _get_boto3_client(self) -> boto3.client:
-        """Lazy initialization of boto3 client"""
-        if self._boto3_client is None:
-            self._boto3_client = boto3.client(
-                service_name='secretsmanager',
-                region_name=self.region
-            )
-        return self._boto3_client
-    
-    def _load_from_aws(self) -> Dict[str, str]:
-        """Load secrets from AWS Secrets Manager"""
+    def get_secret(self) -> Dict[str, str]:
+        """
+        Retrieve secrets from AWS Secrets Manager.
+        
+        Uses the exact AWS recommended boto3 pattern.
+        """
+        # Create a Secrets Manager client
+        session = boto3.session.Session()
+        client = session.client(
+            service_name='secretsmanager',
+            region_name=self.region_name
+        )
+
         try:
-            client = self._get_boto3_client()
-            response = client.get_secret_value(SecretId=self.secret_name)
-            
-            # Secrets can be stored as JSON string or plain text
-            if 'SecretString' in response:
-                secret_string = response['SecretString']
-                try:
-                    return json.loads(secret_string)
-                except json.JSONDecodeError:
-                    # Plain text secret
-                    return {"secret": secret_string}
-            else:
-                # Binary secret (unlikely for this use case)
-                raise ValueError("Binary secrets not supported")
-                
+            get_secret_value_response = client.get_secret_value(
+                SecretId=self.secret_name
+            )
         except ClientError as e:
-            error_code = e.response['Error']['Code']
-            if error_code == 'ResourceNotFoundException':
-                logger.warning(f"Secret {self.secret_name} not found in AWS")
-            elif error_code == 'DecryptionFailureException':
-                logger.error("AWS KMS decryption failed for secret")
-            elif error_code == 'AccessDeniedException':
-                logger.error("Access denied to AWS Secrets Manager")
-            else:
-                logger.error(f"AWS Secrets Manager error: {e}")
-            raise
-    
-    def _load_from_env(self) -> Dict[str, str]:
-        """Load secrets from environment variables"""
-        env_mapping = {
-            'polygon_private_key': 'POLYGON_PRIVATE_KEY',
-            'polymarket_api_key': 'POLYMARKET_API_KEY',
-            'polymarket_api_secret': 'POLYMARKET_API_SECRET',
-            'tomorrow_io_api_key': 'TOMORROW_IO_API_KEY',
-            'supabase_url': 'SUPABASE_URL',
-            'supabase_service_key': 'SUPABASE_SERVICE_KEY',
-            'webhook_url': 'WEBHOOK_URL',
-        }
+            logger.error(f"Failed to retrieve secret: {e}")
+            raise e
+
+        # Decrypts secret using the associated KMS key.
+        secret = get_secret_value_response['SecretString']
         
-        secrets = {}
-        missing_keys = []
-        
-        for key, env_var in env_mapping.items():
-            value = os.environ.get(env_var)
-            if value:
-                secrets[key] = value
-            else:
-                # Webhook is optional
-                if key != 'webhook_url':
-                    missing_keys.append(env_var)
-        
-        if missing_keys:
-            logger.warning(f"Missing environment variables: {missing_keys}")
-        
-        return secrets
+        # Parse JSON secret
+        try:
+            return json.loads(secret)
+        except json.JSONDecodeError:
+            # Plain text secret (unlikely)
+            return {"secret": secret}
     
     def load_secrets(self) -> BotSecrets:
         """
-        Load all secrets from AWS or environment.
+        Load all secrets from AWS Secrets Manager.
         
         Returns:
             BotSecrets: All required secrets for the bot
             
-        Raises:
-            ValueError: If secrets cannot be loaded
+        Note:
+            Supabase keys are optional - bot will work without logging
+            if these are missing.
         """
-        if self._secrets is not None:
-            return self._secrets
-        
-        secrets_dict = {}
-        
-        # Try AWS first
-        if self.use_env_fallback:
-            try:
-                secrets_dict = self._load_from_aws()
-                logger.info("Successfully loaded secrets from AWS Secrets Manager")
-            except Exception as e:
-                logger.warning(f"Failed to load from AWS: {e}, falling back to env vars")
-                secrets_dict = self._load_from_env()
-        else:
-            secrets_dict = self._load_from_aws()
-        
-        # Create BotSecrets object
         try:
-            self._secrets = BotSecrets(
-                polygon_private_key=secrets_dict.get('polygon_private_key', ''),
-                polymarket_api_key=secrets_dict.get('polymarket_api_key', ''),
-                polymarket_api_secret=secrets_dict.get('polymarket_api_secret', ''),
-                tomorrow_io_api_key=secrets_dict.get('tomorrow_io_api_key', ''),
-                supabase_url=secrets_dict.get('supabase_url', ''),
-                supabase_service_key=secrets_dict.get('supabase_service_key', ''),
-                webhook_url=secrets_dict.get('webhook_url'),
-            )
-        except KeyError as e:
-            raise ValueError(f"Missing required secret: {e}")
+            secrets_dict = self.get_secret()
+            logger.info("Successfully loaded secrets from AWS Secrets Manager")
+            
+            # DEBUG: Log what keys were found
+            logger.info(f"DEBUG - Keys found in AWS secret: {list(secrets_dict.keys())}")
+            for key in ['polygon_private_key', 'polymarket_api_key', 'polymarket_api_secret', 'tomorrow_io_api_key', 'supabase_url', 'supabase_service_key']:
+                value = secrets_dict.get(key, 'NOT_FOUND')
+                if value == 'NOT_FOUND':
+                    logger.warning(f"DEBUG - Missing key: {key}")
+                elif len(str(value)) < 10:
+                    logger.warning(f"DEBUG - Key too short: {key} = '{value}'")
+                else:
+                    logger.info(f"DEBUG - Key present: {key}")
+                    
+        except Exception as e:
+            logger.warning(f"Failed to load from AWS: {e}")
+            secrets_dict = {}
         
-        return self._secrets
+        # Create BotSecrets object (Supabase is optional)
+        return BotSecrets(
+            polygon_private_key=secrets_dict.get('polygon_private_key', ''),
+            polymarket_api_key=secrets_dict.get('polymarket_api_key', ''),
+            polymarket_api_secret=secrets_dict.get('polymarket_api_secret', ''),
+            tomorrow_io_api_key=secrets_dict.get('tomorrow_io_api_key', ''),
+            supabase_url=secrets_dict.get('supabase_url', ''),
+            supabase_service_key=secrets_dict.get('supabase_service_key', ''),
+            webhook_url=secrets_dict.get('webhook_url'),
+        )
     
-    def reload_secrets(self) -> BotSecrets:
-        """Force reload of secrets"""
-        self._secrets = None
-        return self.load_secrets()
-    
-    def validate_secrets(self, secrets: BotSecrets) -> bool:
+    def validate_secrets(self, secrets: BotSecrets, require_supabase: bool = False) -> bool:
         """
-        Validate that all required secrets are present.
+        Validate that required secrets are present.
         
         Args:
             secrets: BotSecrets object to validate
+            require_supabase: If False, Supabase keys are optional
             
         Returns:
-            True if all secrets are valid
+            True if required secrets are valid
         """
         required_fields = [
             'polygon_private_key',
             'polymarket_api_key',
             'polymarket_api_secret',
             'tomorrow_io_api_key',
-            'supabase_url',
-            'supabase_service_key',
         ]
         
         for field in required_fields:
@@ -196,12 +148,18 @@ class SecretsManager:
                 logger.error(f"Invalid or missing secret: {field}")
                 return False
         
-        # Validate private key format (should start with 0x and be 64 hex chars)
+        # Supabase is optional
+        if require_supabase:
+            if not secrets.supabase_url or not secrets.supabase_service_key:
+                logger.error("Supabase credentials required but not found")
+                return False
+        
+        # Validate private key format
         if not secrets.polygon_private_key.startswith('0x'):
             logger.error("Polygon private key must start with 0x")
             return False
         
-        if len(secrets.polygon_private_key) != 66:  # 0x + 64 hex chars
+        if len(secrets.polygon_private_key) != 66:
             logger.error("Polygon private key should be 66 characters (0x + 64 hex)")
             return False
         
@@ -210,40 +168,34 @@ class SecretsManager:
 
 def get_secrets_manager(
     secret_name: str = "polymarket-bot/production",
-    region: str = "us-east-1"
+    region_name: str = "us-east-1"
 ) -> SecretsManager:
     """
     Factory function to create a SecretsManager instance.
-    
-    Args:
-        secret_name: Name of the secret in AWS Secrets Manager
-        region: AWS region
-        
-    Returns:
-        Configured SecretsManager instance
     """
-    return SecretsManager(secret_name=secret_name, region=region)
+    return SecretsManager(secret_name=secret_name, region_name=region_name)
 
 
-# Convenience function for quick access
 def load_bot_secrets(
     secret_name: str = "polymarket-bot/production",
-    region: str = "us-east-1"
+    region_name: str = "us-east-1",
+    require_supabase: bool = False
 ) -> BotSecrets:
     """
     Load all bot secrets in one call.
     
     Args:
         secret_name: Name of the secret in AWS Secrets Manager
-        region: AWS region
+        region_name: AWS region
+        require_supabase: If True, Supabase keys are required
         
     Returns:
         BotSecrets object with all secrets
     """
-    manager = SecretsManager(secret_name=secret_name, region=region)
+    manager = SecretsManager(secret_name=secret_name, region_name=region_name)
     secrets = manager.load_secrets()
     
-    if not manager.validate_secrets(secrets):
+    if not manager.validate_secrets(secrets, require_supabase=require_supabase):
         raise ValueError("Secrets validation failed")
     
     return secrets

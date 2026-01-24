@@ -111,11 +111,12 @@ class TradingBot:
         logger.info("Loading secrets...")
         secrets_manager = SecretsManager(
             secret_name=self.config.aws.get("secret_name", "polymarket-bot/production"),
-            region=self.config.aws.get("region", "us-east-1")
+            region_name=self.config.aws.get("region", "us-east-1")
         )
         self._secrets = secrets_manager.load_secrets()
         
-        if not secrets_manager.validate_secrets(self._secrets):
+        # Validate required secrets (Supabase is optional for logging)
+        if not secrets_manager.validate_secrets(self._secrets, require_supabase=False):
             raise ValueError("Secret validation failed")
         
         logger.info("Secrets loaded successfully")

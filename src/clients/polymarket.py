@@ -113,12 +113,11 @@ class PolymarketClient:
         )
         
         # Initialize CLOB client
+        # Note: py-clob-client API changed - no 'secret' parameter
         self.clob = ClobClient(
             host=config.api_url,
             key=secrets.polymarket_api_key,
-            secret=secrets.polymarket_api_secret,
-            chain_id=config.chain_id,
-            funder=config.api_key  # API key as funder
+            chain_id=config.chain_id
         )
         
         # Nonce counter
