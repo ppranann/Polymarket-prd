@@ -135,7 +135,7 @@ class MarketScanner:
             ScanResult with qualifying markets
         """
         cats = categories or self.scanner_config.categories
-        threshold = price_threshold or self.scanner_config.price_threshold
+        threshold = price_threshold or self.scanner_config.snipe_price_threshold
         
         errors = []
         all_markets = []
