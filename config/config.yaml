@@ -61,11 +61,15 @@ scanner:
   scan_interval: 30               # Seconds between price scans (free, no limit)
   price_threshold: 0.85           # Scan YES price < $0.85
   categories:
-    - weather
-    - temperature
-    - precipitation
-    - global                       # ADD THIS: Incheon/London are often here
-    - science                      # ADD THIS: Some weather is under science
+    - Weather
+    - Temperature
+    - Precipitation
+    - Global                       # ADD THIS: Incheon/London are often here
+    - Science
+    - Climate
+    - Recurring
+    - London
+    - Seoul                      # ADD THIS: Some weather is under science
   # Keywords for filtering weather markets
   keywords:
     - Seoul
