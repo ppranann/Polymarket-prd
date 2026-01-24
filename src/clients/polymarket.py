@@ -233,7 +233,7 @@ class PolymarketClient:
             if active:
                 filters['active'] = True
             
-            markets_data = await self.clob.get_markets(
+            markets_data = self.clob.get_markets(
                 filter=filters if filters else None,
                 limit=limit
             )
@@ -616,7 +616,7 @@ class PolymarketClient:
         """
         try:
             # Simple health check by getting the API status
-            await self.clob.get_markets()
+            self.clob.get_markets()
             return True
         except Exception as e:
             logger.error(f"CLOB health check failed: {e}")
