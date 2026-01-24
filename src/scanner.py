@@ -98,6 +98,7 @@ class MarketScanner:
         self.config = config
         self.client = polymarket_client
         self.scanner_config = config.scanner
+        self._keywords = config.scanner.keywords or []
         
         # Cache for weather data (market_id -> ScannedMarket)
         self._market_cache: Dict[str, ScannedMarket] = {}
@@ -441,15 +442,28 @@ class MarketScanner:
         category_lower = market.category.lower()
         weather_keywords = ['weather', 'temperature', 'precip', 'rain', 'snow', 'storm']
         
-        if not any(kw in category_lower for kw in weather_keywords):
-            # Also check the question
-            question_lower = market.question.lower()
-            if not any(kw in question_lower for kw in weather_keywords):
-                logger.debug(f"DEBUG: Skipping {market.id[:8]} - no weather keywords in: {market.question[:50]}...")
-                return False
+        # Check category first
+        if any(kw in category_lower for kw in weather_keywords):
+            logger.info(f"DEBUG: Found market - {market.question}")
+            return True
         
-        logger.info(f"DEBUG: Found market - {market.question}")
-        return True
+        # Also check the question AND description
+        text_to_search = f"{market.question} {getattr(market, 'description', '')}".lower()
+        
+        logger.info(f"DEBUG: Checking market - {market.question[:80]}...")
+        
+        if any(kw in text_to_search for kw in weather_keywords):
+            logger.info(f"DEBUG: Found market - {market.question}")
+            return True
+        
+        # Also check config keywords
+        if self._keywords:
+            if any(kw in text_to_search for kw in self._keywords):
+                logger.info(f"DEBUG: Found market (keyword match) - {market.question}")
+                return True
+        
+        logger.debug(f"DEBUG: Skipping {market.id[:8]} - no weather keywords in: {market.question[:50]}...")
+        return False
     
     async def get_market_prices(
         self,
