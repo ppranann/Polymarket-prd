@@ -56,15 +56,13 @@ class AlphaConfig:
 @dataclass
 class ScannerConfig:
     """Market scanner parameters with Lazy API (save credits)"""
-    scan_interval: int
-    price_threshold: float
-    categories: List[str]
-    filters: Dict[str, Any]
-    # Lazy API Settings
-    weather_cache_ttl: int = 900  # 15 minutes
-    snipe_price_threshold: float = 0.85
     price_threshold: float = 0.85
-    min_weather_update_interval: int = 15  # minutes
+    snipe_price_threshold: float = 0.85
+    scan_interval: int = 30
+    weather_cache_ttl: int = 900
+    # Use default_factory for the list to keep the dataclass happy
+    categories: list = field(default_factory=lambda: ['weather', 'temperature', 'global', 'science'])
+    keywords: list = field(default_factory=lambda: ['Seoul', 'London', 'Incheon', 'Heathrow'])
 
 
 @dataclass
