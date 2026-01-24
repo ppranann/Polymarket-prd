@@ -424,14 +424,17 @@ class MarketScanner:
         """
         # Must be active
         if not market.active:
+            logger.debug(f"DEBUG: Skipping {market.id[:8]} - not active")
             return False
         
         # Must be below price threshold
         if market.yes_price >= threshold:
+            logger.debug(f"DEBUG: Skipping {market.id[:8]} - price ${market.yes_price:.4f} >= ${threshold:.4f}")
             return False
         
         # Must have Liquidity Rewards if required
         if require_rewards and not market.liquidity_rewards_enabled:
+            logger.debug(f"DEBUG: Skipping {market.id[:8]} - no liquidity rewards")
             return False
         
         # Check for weather-related keywords in category
@@ -442,8 +445,10 @@ class MarketScanner:
             # Also check the question
             question_lower = market.question.lower()
             if not any(kw in question_lower for kw in weather_keywords):
+                logger.debug(f"DEBUG: Skipping {market.id[:8]} - no weather keywords in: {market.question[:50]}...")
                 return False
         
+        logger.info(f"DEBUG: Found market - {market.question}")
         return True
     
     async def get_market_prices(
