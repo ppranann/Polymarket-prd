@@ -233,13 +233,16 @@ class PolymarketClient:
             if active:
                 filters['active'] = True
             
-            markets_data = self.clob.get_markets(
-                filter=filters if filters else None,
-                limit=limit
-            )
+            # py-clob-client doesn't support filter parameter, get all and filter
+            markets_data = self.clob.get_markets(limit=limit)
             
             markets = []
             for m in markets_data:
+                # Filter by category and active status in Python
+                if category and m.get('category', '').lower() != category.lower():
+                    continue
+                if active and not m.get('active', True):
+                    continue
                 market = await self.get_market(m['id'])
                 markets.append(market)
             
