@@ -173,6 +173,10 @@ class MarketScanner:
             # Get current prices for all markets (free polling)
             prices = await self._get_current_prices(all_markets)
             
+            # DEBUG: Log all market titles
+            for market in all_markets:
+                logger.debug(f"DEBUG: Found Market - {market.question[:100]} | Active: {market.active} | Price: ${market.yes_price:.4f}")
+            
             # Filter for qualifying markets
             for market in all_markets:
                 current_price = prices.get(market.id, market.yes_price)
