@@ -92,25 +92,19 @@ class PolymarketClient:
 
     @classmethod
     def from_gamma_event(cls, event: dict) -> 'Market':
-        # 1. PARSE STRINGIFIED LISTS (The fix for the '[' error)
+        # 1. Parse prices safely
         raw_prices = event.get('outcomePrices', '["0.5", "0.5"]')
-        if isinstance(raw_prices, str):
-            try:
-                prices = json.loads(raw_prices)
-            except:
-                prices = [0.5, 0.5]
-        else:
-            prices = raw_prices
-
-        # 2. Extract real data
+        prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
         yes_p = float(prices[0]) if prices else 0.5
-        title = event.get('question') or event.get('title') or "Unknown"
-        desc = event.get('description', '')
 
-        return cls(
+        # 2. Extract title
+        title = event.get('question') or event.get('title') or "Unknown"
+
+        # 3. FIX: Return a Market object, not a Client
+        return Market(
             id=event.get('id', ''),
             question=title,
-            description=desc,
+            description=event.get('description', ''),
             condition_id=event.get('conditionId', ''),
             yes_price=yes_p,
             no_price=1.0 - yes_p,
