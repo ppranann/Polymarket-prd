@@ -102,6 +102,8 @@ class PolymarketClient:
         """
         Fetch markets from Gamma API.
         
+        Uses tag_id for 2026 weather markets (100381 = Weather/Climate).
+        
         Args:
             category: Category filter (maps to tags in Gamma API)
             filter: Alternative filter name
@@ -114,18 +116,15 @@ class PolymarketClient:
         try:
             session = await self._get_session()
             
-            # Use category or filter as tags
-            tags = filter or category
-            
+            # 2026: Use tag_id for specific weather markets
+            # tag_id 100381 = Weather/Climate category
             params = {
                 "limit": min(limit, 100),
                 "active": str(active).lower(),
                 "closed": "false",
-                "archived": "false"
+                "archived": "false",
+                "tag_id": "100381"  # Weather/Climate tag for 2026
             }
-            
-            if tags:
-                params["tags"] = tags
             
             async with session.get(
                 f"{self.GAMMA_URL}/events",
@@ -140,7 +139,7 @@ class PolymarketClient:
                 result = await response.json()
                 markets = result.get('data', [])
                 
-                logger.info(f"Gamma API returned {len(markets)} markets for tags={tags}")
+                logger.info(f"Gamma API returned {len(markets)} weather markets (tag_id=100381)")
                 return markets
                 
         except aiohttp.ClientError as e:
@@ -222,9 +221,7 @@ def create_polymarket_client(
     api_key = None
     if secrets:
         api_key = (
-            secrets.get('polymarket_api_key') or
-            secrets.get('api_key') or
-            secrets.get('POLYMARKET_API_KEY')
+            api_key = secrets.polymarket_api_key
         )
     
     return PolymarketClient(
