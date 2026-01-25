@@ -60,42 +60,32 @@ class PolymarketClient:
         return True
 
     async def get_markets(self) -> List[Market]:
-        """Hybrid fetcher: Pulls all active markets and surgically filters them."""
-        # We use the 'markets' endpoint because it's the Source of Truth
-        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=1000"
+        """Hybrid fetcher: Target only the highest-volume active markets in London and Seoul."""
+        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=500"
         
         try:
             async with self._session.get(url) as resp:
                 data = await resp.json()
-                
-                # Markets endpoint returns a flat list
                 raw_markets = data if isinstance(data, list) else data.get('data', [])
                 
                 weather_markets = []
-                # Use the exact city strings you saw in your manual search
-                target_cities = ['seoul', 'nyc', 'new york', 'incheon', 'london', 'toronto', 'dallas']
-                # Keywords to verify it's a temperature market
-                temp_keywords = ['temperature', 'highest', 'degrees', '°c', '°f']
+                # These are the exact terms used in the 2026 contract titles
+                target_cities = ['seoul', 'london', 'incheon', 'city airport']
                 
                 for m in raw_markets:
-                    # Search across the Title, Question, and Description
-                    search_text = f"{m.get('question', '')} {m.get('title', '')} {m.get('description', '')}".lower()
+                    title = m.get('question', '').lower()
                     
-                    # Surgical Sniper Logic: Must be a target city AND about temperature
-                    has_city = any(city in search_text for city in target_cities)
-                    has_temp = any(kw in search_text for kw in temp_keywords)
-                    
-                    if has_city and has_temp:
+                    # Logic: Must be London or Seoul AND mention temperature/Celsius
+                    if any(city in title for city in target_cities) and '°' in title:
                         try:
                             weather_markets.append(self.from_gamma_event(m))
-                        except Exception as parse_err:
-                            self._logger.debug(f"Skipping market {m.get('id')}: {parse_err}")
+                        except:
+                            continue
                 
-                self._logger.info(f"Surgical Scan: Checked {len(raw_markets)} markets, found {len(weather_markets)} REAL weather events")
+                self._logger.info(f"Surgical Scan: Found {len(weather_markets)} REAL snipes in London/Seoul")
                 return weather_markets
-                
         except Exception as e:
-            self._logger.error(f"Global Market Scan Error: {e}")
+            self._logger.error(f"Scan Error: {e}")
             return []
 
     def from_gamma_event(self, event: Dict) -> Market:
