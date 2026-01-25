@@ -17,11 +17,25 @@ class Market:
     volume: float
     description: str = ""
 
+@dataclass
+class Order:
+    id: str
+    market_id: str
+    side: str
+    price: float
+    size: float
+    status: str = "open"
+
+@dataclass
+class Position:
+    market_id: str
+    size: float
+    avg_price: float
+
 class PolymarketClient:
     def __init__(self, api_key: str, api_secret: str, passphrase: str):
         self.GAMMA_URL = "https://gamma-api.polymarket.com"
         self._api_key = api_key
-        # Initialize the logger correctly
         self._logger = logging.getLogger(__name__)
         self._session = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self._api_key}"})
         self._logger.info(f"PolymarketClient initialized with API key: {'set' if api_key else 'None'}")
@@ -55,7 +69,6 @@ class PolymarketClient:
                 self._logger.info(f"Filtered {len(raw_markets)} total markets down to {len(weather_markets)} weather events")
                 return weather_markets
         except Exception as e:
-            # Fixed: self._logger is now guaranteed to exist
             self._logger.error(f"Error fetching/filtering markets: {e}")
             return []
 
@@ -86,4 +99,8 @@ class PolymarketClient:
 
     async def close(self):
         await self._session.close()
+
+# THIS IS THE MISSING BRIDGE
+def create_polymarket_client(api_key, api_secret, passphrase):
+    return PolymarketClient(api_key, api_secret, passphrase)
 
