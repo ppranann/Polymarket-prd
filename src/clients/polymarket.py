@@ -1,208 +1,89 @@
-import json
 import logging
-import asyncio
-import aiohttp
-from typing import List, Dict, Any, Optional
+import json
 from dataclasses import dataclass
-
-logger = logging.getLogger(__name__)
+from typing import Dict, List, Optional
+import aiohttp
 
 @dataclass
 class Market:
     id: str
     question: str
+    condition_id: str
+    yes_price: float
+    no_price: float
+    last_trade_price: float
+    active: bool
+    category: str
+    volume: float
     description: str = ""
-    condition_id: str = ""
-    tokens: List[Dict[str, str]] = None
-    last_trade_price: float = 0.0
-    # Additional fields for scanner compatibility
-    active: bool = True
-    yes_price: float = 0.0
-    no_price: float = 0.0
-    category: str = ""
-    liquidity_rewards_enabled: bool = False
-    volume: float = 0.0
-    
-    def __post_init__(self):
-        if self.tokens is None:
-            self.tokens = []
-
-@dataclass
-class Order:
-    order_id: str
-    market_id: str
-    price: float
-    side: str
-
-@dataclass
-class Position:
-    asset_id: str
-    size: float
-    avg_price: float
 
 class PolymarketClient:
-    """
-    Polymarket CLOB Client for market data and trading.
-    
-    Uses Gamma API for market discovery and CLOB for trading.
-    """
-    
-    CLOB_URL = "https://clob.polymarket.com"
-    GAMMA_URL = "https://gamma-api.polymarket.com"
-    
-    def __init__(self, config=None, api_key: str = None):
-        self.config = config
-        self.api_key = api_key
-        self._session: Optional[aiohttp.ClientSession] = None
-        logger.info(f"PolymarketClient initialized with API key: {'set' if api_key else 'not set'}")
-    
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session"""
-        if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=30)
-            self._session = aiohttp.ClientSession(timeout=timeout)
-        return self._session
-    
-    async def close(self):
-        """Close the HTTP session"""
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
-    
-    async def health_check(self) -> bool:
-        """Check if Polymarket APIs are reachable"""
-        try:
-            session = await self._get_session()
-            # Quick check against Gamma API (no auth needed)
-            async with session.get(f"{self.GAMMA_URL}/events?limit=1") as resp:
-                return resp.status == 200
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            return False
+    def __init__(self, api_key: str, api_secret: str, passphrase: str):
+        self.GAMMA_URL = "https://gamma-api.polymarket.com"
+        self._api_key = api_key
+        # Initialize the logger correctly
+        self._logger = logging.getLogger(__name__)
+        self._session = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self._api_key}"})
+        self._logger.info(f"PolymarketClient initialized with API key: {'set' if api_key else 'None'}")
 
-    async def get_markets(self):
+    async def get_markets(self) -> List[Market]:
         """Fetches and strictly filters for weather markets."""
-        # Broaden slightly to ensure we don't miss 'Recurring' or 'Science' categories
-        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=100"
+        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=500"
         
         try:
             async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    self._logger.error(f"Gamma API error: {resp.status}")
+                    return []
+                
                 data = await resp.json()
                 raw_markets = data if isinstance(data, list) else data.get('data', [])
                 
                 weather_markets = []
+                # Looking for the high-quality signal: Seoul, NYC, London, Toronto
+                weather_keywords = ['temperature', 'weather', 'rain', 'snow', '°c', '°f', 'precip']
+                
                 for m in raw_markets:
-                    # Search across all possible text fields
                     search_text = f"{m.get('question', '')} {m.get('title', '')} {m.get('description', '')}".lower()
                     
-                    # Keywords that define a "Weather" market
-                    weather_keywords = ['temperature', 'weather', 'rain', 'snow', '°c', '°f', 'precip']
-                    
                     if any(kw in search_text for kw in weather_keywords):
-                        weather_markets.append(self.from_gamma_event(m))
+                        try:
+                            weather_markets.append(self.from_gamma_event(m))
+                        except Exception as parse_error:
+                            self._logger.debug(f"Skipping market due to parse error: {parse_error}")
                 
-                self._logger.info(f"Filtered {len(raw_markets)} markets down to {len(weather_markets)} weather events")
+                self._logger.info(f"Filtered {len(raw_markets)} total markets down to {len(weather_markets)} weather events")
                 return weather_markets
         except Exception as e:
+            # Fixed: self._logger is now guaranteed to exist
             self._logger.error(f"Error fetching/filtering markets: {e}")
             return []
 
-    @classmethod
-    def from_gamma_event(cls, event: dict) -> 'Market':
-        # 1. Parse prices safely
+    def from_gamma_event(self, event: Dict) -> Market:
         raw_prices = event.get('outcomePrices', '["0.5", "0.5"]')
-        prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
-        yes_p = float(prices[0]) if prices else 0.5
+        if isinstance(raw_prices, str):
+            try:
+                prices = json.loads(raw_prices)
+            except:
+                prices = [0.5, 0.5]
+        else:
+            prices = raw_prices
+        
+        yes_p = float(prices[0]) if (prices and len(prices) > 0) else 0.5
 
-        # 2. Extract title
-        title = event.get('question') or event.get('title') or "Unknown"
-
-        # 3. FIX: Return a Market object, not a Client
         return Market(
-            id=event.get('id', ''),
-            question=title,
+            id=str(event.get('id', '')),
+            question=event.get('question', '') or event.get('title', 'Unknown'),
             description=event.get('description', ''),
             condition_id=event.get('conditionId', ''),
             yes_price=yes_p,
-            no_price=1.0 - yes_p,
+            no_price=round(1.0 - yes_p, 4),
             last_trade_price=yes_p,
             active=not event.get('closed', False),
-            category=event.get('category', 'general'),
+            category=str(event.get('category', 'weather')),
             volume=float(event.get('volume', 0) or 0)
         )
 
-    async def get_market(self, market_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single market by ID"""
-        try:
-            session = await self._get_session()
-            
-            async with session.get(
-                f"{self.GAMMA_URL}/events/{market_id}"
-            ) as response:
-                if response.status == 200:
-                    return await response.json()
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error fetching market {market_id}: {e}")
-            return None
+    async def close(self):
+        await self._session.close()
 
-    async def get_price(self, market_id: str) -> float:
-        """
-        Get current price for a market from CLOB.
-        
-        For now, returns a default price since we need proper CLOB auth.
-        """
-        try:
-            if not self.api_key:
-                logger.debug(f"No API key for CLOB, using default price for {market_id[:8]}")
-                return 0.5  # Default price
-            
-            session = await self._get_session()
-            
-            # Try CLOB get_price endpoint
-            async with session.get(
-                f"{self.CLOB_URL}/prices/{market_id}",
-                headers={"Authorization": f"Bearer {self.api_key}"}
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return float(data.get('price', 0.5))
-                
-                # Fallback to default price
-                return 0.5
-                
-        except Exception as e:
-            logger.warning(f"Could not fetch price for {market_id}: {e}")
-            return 0.5
-
-    async def get_balance(self, asset_id: str) -> float:
-        """Get token balance (placeholder - needs proper auth)"""
-        return 0.0
-
-    async def get_order_book(self, market_id: str) -> Dict[str, Any]:
-        """Get order book for a market (placeholder - needs proper auth)"""
-        return {"bids": [], "asks": []}
-
-def create_polymarket_client(
-    config=None,
-    secrets=None,
-    paper_trading: bool = False
-) -> PolymarketClient:
-    """
-    Create a PolymarketClient.
-    
-    Args:
-        config: Bot configuration
-        secrets: Secrets dict with API keys
-        paper_trading: Whether in paper trading mode
-        
-    Returns:
-        Configured PolymarketClient
-    """
-    api_key = secrets.polymarket_api_key if secrets else None
-    
-    return PolymarketClient(
-        config=config,
-        api_key=api_key
-    )
