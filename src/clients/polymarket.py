@@ -65,38 +65,35 @@ class PolymarketClient:
         limit: int = 1000,
         query: Optional[str] = None
     ) -> List[Market]:
-        """Events-First fetcher: More reliable for finding recurring weather contracts."""
-        # Using the Events endpoint because it groups the temperature 'buckets' perfectly
-        url = f"{self.GAMMA_URL}/events?closed=false&limit=100&ascending=false"
+        """Global Fetcher: Pulls everything active and filters by city name."""
+        # This hits the main list of all active markets (usually ~500-800)
+        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=1000"
         
         try:
             async with self._session.get(url) as resp:
                 data = await resp.json()
-                # Events endpoint returns a list of event objects, each containing a list of markets
-                events = data if isinstance(data, list) else data.get('data', [])
+                raw_markets = data if isinstance(data, list) else data.get('data', [])
                 
                 weather_markets = []
-                # Seoul (Incheon) and London are the active 'Alpha' right now
-                target_keywords = ['seoul', 'london', 'incheon', 'temperature', 'highest']
+                # Exact keywords found in live 2026 contracts
+                target_cities = ['seoul', 'london', 'incheon', 'nyc', 'new york']
                 
-                for event in events:
-                    title = event.get('title', '').lower()
+                for m in raw_markets:
+                    # Search title and question for city names
+                    search_text = f"{m.get('question', '')} {m.get('title', '')}".lower()
                     
-                    # If the Event title looks like weather, we dig into its markets
-                    if any(kw in title for kw in target_keywords):
-                        self._logger.info(f"📍 Found Event: {title}")
-                        
-                        for m in event.get('markets', []):
-                            # We check the specific market question (e.g., 'Will it be 8°C?')
+                    if any(city in search_text for city in target_cities):
+                        # Verify it's a temperature market (not a sports team)
+                        if any(kw in search_text for kw in ['temperature', 'highest', '°', 'degrees']):
                             try:
                                 weather_markets.append(self.from_gamma_event(m))
                             except:
                                 continue
                 
-                self._logger.info(f"Surgical Scan: Found {len(weather_markets)} total weather contracts")
+                self._logger.info(f"Sledgehammer Scan: Checked {len(raw_markets)} markets, found {len(weather_markets)} targets")
                 return weather_markets
         except Exception as e:
-            self._logger.error(f"Event Scan Error: {e}")
+            self._logger.error(f"Global Scan Error: {e}")
             return []
 
     async def cancel_all_orders(self):
