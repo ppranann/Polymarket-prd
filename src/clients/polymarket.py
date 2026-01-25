@@ -59,33 +59,65 @@ class PolymarketClient:
     async def health_check(self) -> bool:
         return True
 
-    async def get_markets(self) -> List[Market]:
-        """Hybrid fetcher: Target only the highest-volume active markets in London and Seoul."""
-        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=500"
+    async def get_markets(
+        self,
+        categories: Optional[List[str]] = None,
+        limit: int = 1000
+    ) -> List[Market]:
+        """
+        Fetch markets from Gamma API.
+        
+        Args:
+            categories: Filter by category (e.g., ['weather', 'science', 'politics'])
+            limit: Maximum number of markets to fetch (default 1000)
+            
+        Returns:
+            List of Market objects
+        """
+        all_markets = []
         
         try:
+            # Strategy 1: Fetch by specific categories if provided
+            if categories:
+                for cat in categories:
+                    url = f"{self.GAMMA_URL}/markets?category={cat}&active=true&closed=false&limit={limit}"
+                    async with self._session.get(url) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            cat_markets = data if isinstance(data, list) else data.get('data', [])
+                            all_markets.extend(cat_markets)
+                            self._logger.info(f"Fetched {len(cat_markets)} markets from category '{cat}'")
+            
+            # Strategy 2: Always fetch all active markets (no category filter)
+            # This catches markets that might not have the correct category tag
+            url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit={limit}"
             async with self._session.get(url) as resp:
-                data = await resp.json()
-                raw_markets = data if isinstance(data, list) else data.get('data', [])
-                
-                weather_markets = []
-                # These are the exact terms used in the 2026 contract titles
-                target_cities = ['seoul', 'london', 'incheon', 'city airport']
-                
-                for m in raw_markets:
-                    title = m.get('question', '').lower()
+                if resp.status == 200:
+                    data = await resp.json()
+                    raw_markets = data if isinstance(data, list) else data.get('data', [])
+                    self._logger.info(f"Fetched {len(raw_markets)} total active markets")
                     
-                    # Logic: Must be London or Seoul AND mention temperature/Celsius
-                    if any(city in title for city in target_cities) and '°' in title:
-                        try:
-                            weather_markets.append(self.from_gamma_event(m))
-                        except:
-                            continue
-                
-                self._logger.info(f"Surgical Scan: Found {len(weather_markets)} REAL snipes in London/Seoul")
-                return weather_markets
+                    # Merge without duplicates
+                    existing_ids = {m.get('id') for m in all_markets}
+                    for m in raw_markets:
+                        if m.get('id') not in existing_ids:
+                            all_markets.append(m)
+            
+            self._logger.info(f"Total unique markets to process: {len(all_markets)}")
+            
+            # Convert to Market objects
+            markets = []
+            for m in all_markets:
+                try:
+                    markets.append(self.from_gamma_event(m))
+                except Exception as e:
+                    self._logger.warning(f"Failed to parse market {m.get('id')}: {e}")
+                    continue
+            
+            return markets
+            
         except Exception as e:
-            self._logger.error(f"Scan Error: {e}")
+            self._logger.error(f"Market fetch error: {e}")
             return []
 
     def from_gamma_event(self, event: Dict) -> Market:

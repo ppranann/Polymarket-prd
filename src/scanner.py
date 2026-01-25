@@ -150,8 +150,9 @@ class MarketScanner:
         logger.info(f"Categories: {cats}, Price threshold: ${threshold:.4f}")
         
         try:
-            # Scan for markets (now uses the simplified get_markets())
-            market_dicts = await self.client.get_markets()
+            # Scan for markets using categories from config + always search all
+            scan_categories = cats if cats else ['weather', 'science']
+            market_dicts = await self.client.get_markets(categories=scan_categories)
             
             # Convert Gamma API response to Market objects
             for m in market_dicts:
@@ -431,22 +432,28 @@ class MarketScanner:
             logger.debug(f"DEBUG: Skipping {market.id[:8]} - no liquidity rewards")
             return False
         
-        # Check for weather-related keywords in category
-        category_lower = market.category.lower()
-        weather_keywords = ['weather', 'temperature', 'precip', 'rain', 'snow', 'storm']
+        # Extended weather keywords to catch more market types
+        weather_keywords = [
+            'weather', 'temperature', 'precip', 'rain', 'snow', 'storm',
+            'heat', 'cold', 'warm', 'freeze', 'frost', 'celsius',
+            'seoul', 'london', 'incheon', 'nyc', 'new york', 'heathrow',
+            'tokyo', 'paris', 'berlin', 'sydney', 'beijing', 'shanghai',
+            'hong kong', 'singapore', 'dubai', 'mumbai', 'delhi'
+        ]
         
         # Check category first
-        if any(kw in category_lower for kw in weather_keywords):
-            logger.info(f"DEBUG: Found market - {market.question}")
+        category_lower = market.category.lower()
+        if any(kw in category_lower for kw in ['weather', 'science']):
+            logger.info(f"DEBUG: Found weather/science market - {market.question[:60]}")
             return True
         
-        # Also check the question AND description
+        # Check the question AND description for weather keywords
         text_to_search = f"{market.question} {getattr(market, 'description', '')}".lower()
         
-        logger.info(f"DEBUG: Checking market - {market.question[:80]}...")
+        logger.debug(f"DEBUG: Checking market - {market.question[:50]}...")
         
         if any(kw in text_to_search for kw in weather_keywords):
-            logger.info(f"DEBUG: Found market - {market.question}")
+            logger.info(f"DEBUG: Found weather market - {market.question[:80]}")
             return True
         
         # Also check config keywords
