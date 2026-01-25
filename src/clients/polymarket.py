@@ -60,9 +60,9 @@ class PolymarketClient:
         return True
 
     async def get_markets(self) -> List[Market]:
-        """Strictly fetches markets from Climate, Science, and Weather categories."""
-        # Using the specific Climate/Science tag (100381)
-        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&tag_id=100381&limit=100"
+        """Uses broad search to find temperature-related markets that may be hidden from category tabs."""
+        # Use the broad search endpoint to find what the category tab is missing
+        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=100&query=temperature"
         
         try:
             async with self._session.get(url) as resp:
@@ -71,9 +71,9 @@ class PolymarketClient:
                 raw_markets = data if isinstance(data, list) else data.get('data', [])
                 
                 weather_markets = []
-                # Weather keywords and target city keywords
-                weather_keywords = ['temperature', 'weather', 'rain', 'snow', '°', 'degrees']
-                city_keywords = ['seoul', 'nyc', 'new york', 'london', 'heathrow', 'incheon']
+                # Weather keywords including exact market title format
+                weather_keywords = ['temperature', 'weather', 'highest temperature', '°c', '°f']
+                city_keywords = ['seoul', 'nyc', 'new york', 'dallas', 'miami', 'toronto']
                 
                 for m in raw_markets:
                     search_text = f"{m.get('question', '')} {m.get('title', '')}".lower()
