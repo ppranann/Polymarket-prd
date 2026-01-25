@@ -68,9 +68,31 @@ class PolymarketClient:
             async with self._session.get(url) as resp:
                 data = await resp.json()
                 
-                # 1. CRITICAL: Search returns a dict with an 'events' key
-                # It is NOT a flat list like the /markets endpoint
-                events = data.get('events', []) if isinstance(data, dict) else []
+                self._logger.debug(f"API Response type: {type(data)}, keys: {data.keys() if isinstance(data, dict) else 'not a dict'}")
+                
+                # Try different response structures
+                events = []
+                
+                # 1. Try 'events' key (nested structure)
+                if isinstance(data, dict) and 'events' in data:
+                    events = data.get('events', [])
+                    self._logger.debug(f"Found 'events' key with {len(events)} events")
+                # 2. Try 'data' key
+                elif isinstance(data, dict) and 'data' in data:
+                    data_list = data.get('data', [])
+                    self._logger.debug(f"Found 'data' key with {len(data_list)} items")
+                    # Check if data items have nested 'markets'
+                    if data_list and isinstance(data_list[0], dict) and 'markets' in data_list[0]:
+                        events = data_list
+                    else:
+                        # Treat as flat market list
+                        events = [{'markets': data_list}]
+                # 3. Try as flat list
+                elif isinstance(data, list):
+                    self._logger.debug(f"Response is a flat list with {len(data)} items")
+                    events = [{'markets': data}]
+                else:
+                    self._logger.warning(f"Unknown response structure: {type(data)}")
                 
                 weather_markets = []
                 target_cities = ['seoul', 'nyc', 'london', 'incheon', 'toronto', 'dallas']
@@ -78,11 +100,14 @@ class PolymarketClient:
                 for event in events:
                     # 2. Extract markets from inside each event
                     markets = event.get('markets', [])
+                    self._logger.debug(f"Event has {len(markets)} markets")
+                    
                     for m in markets:
                         title = m.get('question', '').lower()
                         
                         # 3. Only pull if it's one of our target cities
                         if any(city in title for city in target_cities):
+                            self._logger.info(f"Found target market: {m.get('question', '')[:50]}...")
                             # Pass the market dict to our parser
                             weather_markets.append(self.from_gamma_event(m))
                 
