@@ -150,8 +150,9 @@ class MarketScanner:
         logger.info(f"Categories: {cats}, Price threshold: ${threshold:.4f}")
         
         try:
-            # Scan for markets using categories from config + always search all
-            scan_categories = cats if cats else ['weather', 'science']
+            # Scan for markets - ONLY use 'weather' category, NOT 'science' 
+            # (science category includes politics, sports, etc.)
+            scan_categories = ['weather']
             market_dicts = await self.client.get_markets(categories=scan_categories)
             
             # Convert Gamma API response to Market objects
@@ -434,7 +435,7 @@ class MarketScanner:
         
         # Extended weather keywords to catch more market types
         weather_keywords = [
-            'weather', 'temperature', 'precip', 'rain', 'snow', 'storm',
+            'temperature', 'precip', 'rain', 'snow', 'storm',
             'heat', 'cold', 'warm', 'freeze', 'frost', 'celsius',
             'seoul', 'london', 'incheon', 'nyc', 'new york', 'heathrow',
             'tokyo', 'paris', 'berlin', 'sydney', 'beijing', 'shanghai',
@@ -442,13 +443,13 @@ class MarketScanner:
             'highest temperature', 'lowest temperature', 'hottest', 'coldest'
         ]
         
-        # Check category first
+        # STRICT: Only accept if category is literally 'weather'
         category_lower = market.category.lower()
-        if any(kw in category_lower for kw in ['weather', 'science']):
-            logger.info(f"DEBUG: Found weather/science market - {market.question[:60]}")
+        if category_lower == 'weather':
+            logger.info(f"DEBUG: Found weather category market - {market.question[:60]}")
             return True
         
-        # Check the question AND description for weather keywords
+        # Also check the question AND description for weather keywords
         text_to_search = f"{market.question} {getattr(market, 'description', '')}".lower()
         
         logger.debug(f"DEBUG: Checking market - {market.question[:50]}...")
