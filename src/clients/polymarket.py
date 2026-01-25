@@ -66,54 +66,46 @@ class PolymarketClient:
         query: Optional[str] = None
     ) -> List[Market]:
         """
-        Hybrid Discovery: Uses Tag 84 (Weather Events) with surgical filtering.
+        Slug-based Discovery: Fetches weather markets by predictable slug pattern.
         
         Strategy:
-        - Tag 84 returns Events, each containing nested Markets (temperature buckets)
-        - Filter events by city name in slug/title
-        - If query provided, also filter by keyword in title/question
-        - Iterate through event.markets array to get temperature buckets
-        - Check acceptingOrders and !closed for active markets
+        - Polymarket creates weather markets with predictable naming pattern
+        - Pattern: highest-temperature-in-{city}-on-{month}-{day}
+        - Fetch each slug directly via /events/slug/{slug}
+        - Extract nested markets and filter for active buckets
         
-        API Structure:
-        /events?tag=84&active=true&closed=false
-          -> events[].slug = "highest-temperature-in-london-on-january-25"
-          -> events[].markets = [{ groupItemTitle: "7°C", acceptingOrders: true, ... }]
+        This approach is MORE RELIABLE than Tag 84 which returns wrong results.
         """
-        # Tag 84 returns EVENTS with nested markets
-        # Try both tag and tag_id parameters
-        url = f"{self.GAMMA_URL}/events?tag=84&active=true&closed=false&limit=100"
+        from datetime import datetime, timedelta
         
-        try:
-            async with self._session.get(url) as resp:
-                data = await resp.json()
-                
-                # DEBUG: Print raw response info
-                print(f"DEBUG: API URL: {url}")
-                print(f"DEBUG: Response type: {type(data)}")
-                
-                events = data if isinstance(data, list) else data.get('data', [])
-                print(f"DEBUG: Total events returned: {len(events)}")
-                
-                # Print first 3 events for debugging
-                for i, event in enumerate(events[:3]):
-                    print(f"  DEBUG Event {i}: slug='{event.get('slug', '')[:50]}' | title='{event.get('title', '')[:50]}' | markets={len(event.get('markets', []))}")
-                
-                weather_markets = []
-                # Target cities - match ANY city name in slug/title
-                target_cities = ['london', 'seoul', 'incheon', 'new york', 'nyc']
-                
-                print("--- HYBRID DISCOVERY: Scanning Tag 84 Events ---")
-                
-                for event in events:
-                    slug = event.get('slug', '').lower()
-                    title = event.get('title', '').lower()
-                    
-                    # Check if this event is about any target city
-                    if not any(city in slug or city in title for city in target_cities):
+        # Target cities for weather markets
+        target_cities = ['london', 'seoul', 'incheon', 'new-york', 'nyc']
+        
+        # Generate slugs for today + next 2 days
+        slugs_to_fetch = []
+        for i in range(3):  # Today, tomorrow, day after
+            date = datetime.utcnow() + timedelta(days=i)
+            date_str = date.strftime('%B-%-d').lower()  # "january-25"
+            for city in target_cities:
+                slugs_to_fetch.append(f"highest-temperature-in-{city}-on-{date_str}")
+        
+        weather_markets = []
+        fetched_count = 0
+        
+        print("--- SLUG-BASED DISCOVERY: Fetching weather markets ---")
+        
+        for slug in slugs_to_fetch:
+            try:
+                url = f"{self.GAMMA_URL}/events/slug/{slug}"
+                async with self._session.get(url) as resp:
+                    if resp.status != 200:
                         continue
                     
-                    print(f"  📍 Found city event: {event.get('slug', '')[:60]}")
+                    event = await resp.json()
+                    fetched_count += 1
+                    
+                    city = slug.split('-in-')[1].split('-on-')[0] if '-in-' in slug else 'unknown'
+                    print(f"  📍 Fetched {city}: {len(event.get('markets', []))} markets")
                     
                     # Iterate through NESTED markets array
                     for market in event.get('markets', []):
@@ -134,12 +126,14 @@ class PolymarketClient:
                         except Exception as e:
                             self._logger.warning(f"Failed to convert market: {e}")
                             continue
-                
-                self._logger.info(f"Hybrid Discovery: Found {len(weather_markets)} temperature buckets")
-                return weather_markets
-        except Exception as e:
-            self._logger.error(f"Hybrid Discovery Error: {e}")
-            return []
+                            
+            except Exception as e:
+                self._logger.debug(f"Slug {slug} not found or error: {e}")
+                continue
+        
+        print(f"--- DISCOVERY COMPLETE: Fetched {fetched_count} events, Found {len(weather_markets)} temperature buckets ---")
+        self._logger.info(f"Slug-based Discovery: Found {len(weather_markets)} temperature buckets")
+        return weather_markets
 
     def _convert_gamma_market(self, market: Dict, event: Dict) -> Market:
         """
