@@ -150,9 +150,9 @@ class MarketScanner:
         logger.info(f"Categories: {cats}, Price threshold: ${threshold:.4f}")
         
         try:
-            # Scan for markets using TEMPERATURE query to find weather markets
-            # This searches the hidden metadata and finds Seoul/London/Incheon markets
-            market_dicts = await self.client.get_markets(query='temperature')
+            # Scan for weather markets using Hybrid Discovery (Tag 84)
+            # This fetches all temperature bucket markets (Seoul, London, etc.)
+            market_dicts = await self.client.get_markets()
             
             # Convert Gamma API response to Market objects
             for m in market_dicts:

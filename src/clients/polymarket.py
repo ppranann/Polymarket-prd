@@ -66,46 +66,111 @@ class PolymarketClient:
         query: Optional[str] = None
     ) -> List[Market]:
         """
-        Hybrid Discovery: Uses Tag 84 (Weather) with surgical filtering.
+        Hybrid Discovery: Uses Tag 84 (Weather Events) with surgical filtering.
         
         Strategy:
-        - Tag 84 is the confirmed Weather tag (from CURL)
-        - Filter for "highest temperature" title format
-        - Target specific cities: london, seoul, incheon, new york, nyc
+        - Tag 84 returns Events, each containing nested Markets (temperature buckets)
+        - Filter events by city name in slug/title
+        - If query provided, also filter by keyword in title/question
+        - Iterate through event.markets array to get temperature buckets
+        - Check acceptingOrders and !closed for active markets
         
-        This is more efficient than iterating all events.
+        API Structure:
+        /events?tag_id=84
+          -> events[].slug = "highest-temperature-in-london-on-january-25"
+          -> events[].markets = [{ groupItemTitle: "7°C", acceptingOrders: true, ... }]
         """
-        # Hybrid Discovery: Tag 84 + "highest temperature" filter
-        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&tag_id=84&limit=100"
+        # Tag 84 returns EVENTS with nested markets
+        url = f"{self.GAMMA_URL}/events?tag_id=84&active=true&limit=100"
         
         try:
             async with self._session.get(url) as resp:
                 data = await resp.json()
-                raw_markets = data if isinstance(data, list) else data.get('data', [])
+                events = data if isinstance(data, list) else data.get('data', [])
                 
                 weather_markets = []
-                # Target cities confirmed in the JSON
+                # Target cities - match ANY city name in slug/title
                 target_cities = ['london', 'seoul', 'incheon', 'new york', 'nyc']
                 
-                print("--- HYBRID DISCOVERY: Scanning Tag 84 ---")
+                print("--- HYBRID DISCOVERY: Scanning Tag 84 Events ---")
                 
-                for m in raw_markets:
-                    title = m.get('question', '').lower()
+                for event in events:
+                    slug = event.get('slug', '').lower()
+                    title = event.get('title', '').lower()
                     
-                    # Sniper Logic: Must be a target city AND 'highest temperature' format
-                    if any(city in title for city in target_cities) and 'highest temperature' in title:
-                        print(f"  🎯 Found: {m.get('question', '')[:80]}")
+                    # Check if this event is about any target city
+                    if not any(city in slug or city in title for city in target_cities):
+                        continue
+                    
+                    print(f"  📍 Found city event: {event.get('slug', '')[:60]}")
+                    
+                    # Iterate through NESTED markets array
+                    for market in event.get('markets', []):
+                        # Skip if not accepting orders or already closed
+                        if not market.get('acceptingOrders', True):
+                            continue
+                        if market.get('closed', False):
+                            continue
+                        
+                        # Extract temperature bucket from groupItemTitle
+                        group_item_title = market.get('groupItemTitle', '')
+                        print(f"    🎯 Bucket: {group_item_title}")
+                        
                         try:
-                            weather_markets.append(self.from_gamma_event(m))
+                            # Convert gamma market to our Market format
+                            converted = self._convert_gamma_market(market, event)
+                            weather_markets.append(converted)
                         except Exception as e:
                             self._logger.warning(f"Failed to convert market: {e}")
                             continue
                 
-                self._logger.info(f"Hybrid Discovery: Found {len(weather_markets)} REAL temperature buckets")
+                self._logger.info(f"Hybrid Discovery: Found {len(weather_markets)} temperature buckets")
                 return weather_markets
         except Exception as e:
             self._logger.error(f"Hybrid Discovery Error: {e}")
             return []
+
+    def _convert_gamma_market(self, market: Dict, event: Dict) -> Market:
+        """
+        Convert a Gamma market object to our Market format.
+        
+        Args:
+            market: Individual market from event.markets array
+            event: Parent event object for context
+            
+        Returns:
+            Market object
+        """
+        # Parse outcome prices
+        raw_prices = market.get('outcomePrices', '["0.5", "0.5"]')
+        if isinstance(raw_prices, str):
+            try:
+                prices = json.loads(raw_prices)
+            except:
+                prices = [0.5, 0.5]
+        else:
+            prices = raw_prices
+        
+        yes_p = float(prices[0]) if (prices and len(prices) > 0) else 0.5
+        
+        # Build descriptive question from groupItemTitle
+        group_title = market.get('groupItemTitle', '')
+        event_title = event.get('title', 'Unknown')
+        question = f"{event_title} - {group_title}" if group_title else event_title
+        
+        return Market(
+            id=str(market.get('id', '')),
+            question=question,
+            condition_id=market.get('conditionId', event.get('id', '')),
+            yes_price=yes_p,
+            no_price=round(1.0 - yes_p, 4),
+            last_trade_price=market.get('lastTradePrice', yes_p),
+            active=market.get('acceptingOrders', True) and not market.get('closed', False),
+            category='weather',
+            volume=float(market.get('volume', 0) or 0),
+            description=market.get('description', event.get('description', '')),
+            liquidity_rewards_enabled=market.get('liquidityRewardsEnabled', False)
+        )
 
     async def cancel_all_orders(self):
         """Fixes the 'object has no attribute' error during shutdown."""

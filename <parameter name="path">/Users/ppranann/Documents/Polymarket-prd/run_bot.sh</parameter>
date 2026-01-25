@@ -1,0 +1,31 @@
+<parameter name="content">#!/bin/bash
+
+# Polymarket Bot - Background Runner
+# Usage: ./run_bot.sh [paper|live]
+
+MODE=${1:-paper}
+
+echo "🚀 Starting Polymarket Bot in ${MODE} mode..."
+
+# Create logs directory if not exists
+mkdir -p logs
+
+# Kill any existing bot process
+pkill -f "python -m src.main" 2>/dev/null
+sleep 1
+
+# Run in background using nohup
+if [ "$MODE" = "paper" ]; then
+    nohup python -m src.main --paper --config config/config.yaml > logs/bot.log 2>&1 &
+    echo "✅ Bot started in PAPER mode"
+    echo "📄 Logs: tail -f logs/bot.log"
+else
+    nohup python -m src.main --config config/config.yaml > logs/bot.log 2>&1 &
+    echo "✅ Bot started in LIVE mode"
+    echo "📄 Logs: tail -f logs/bot.log"
+fi
+
+# Show process
+sleep 2
+ps aux | grep "python -m src.main" | grep -v grep
+</parameter>
