@@ -76,7 +76,7 @@ scanner:
     liquidity_rewards_only: true  # Only Blue Clock markets
   # Lazy API Settings (save Tomorrow.io credits)
   weather_cache_ttl: 900          # Cache weather for 15 minutes (900 seconds)
-  snipe_price_threshold: 0.15     # Only fetch weather for markets < $0.15
+  snipe_price_threshold: 0.80     # Only fetch weather for markets < $0.80
   min_weather_update_interval: 15 # Minimum minutes between weather API calls
 
 # Alpha Snipe Parameters
