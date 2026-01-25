@@ -59,26 +59,24 @@ farming:
 # Scanner Parameters
 scanner:
   scan_interval: 30               # Seconds between price scans
-  price_threshold: 0.85           # Scan YES price < $0.85
+  price_threshold: 0.15           # Scan YES price < $0.15 (Sniper threshold)
   categories: []
-  # Keywords for filtering weather markets (Wide Net approach)
+  # Keywords for filtering weather markets (Sniper approach - specific cities)
   keywords:
     - "Seoul"
+    - "Incheon"
     - "NYC"
+    - "New York"
     - "London"
     - "Heathrow"
     - "Temperature"
-    - "Snow"
-    - "Rain"
-    - "°C"
-    - "Korea"
   # Market filters
   filters:
     active: true
-    liquidity_rewards_only: false  # Set to false for testing discovery
+    liquidity_rewards_only: true  # Only Blue Clock markets
   # Lazy API Settings (save Tomorrow.io credits)
   weather_cache_ttl: 900          # Cache weather for 15 minutes (900 seconds)
-  snipe_price_threshold: 0.80     # Only fetch weather for markets < $0.80
+  snipe_price_threshold: 0.15     # Only fetch weather for markets < $0.15
   min_weather_update_interval: 15 # Minimum minutes between weather API calls
 
 # Alpha Snipe Parameters

@@ -81,18 +81,24 @@ class PolymarketClient:
             return False
 
     async def get_markets(self):
-        """Fetches a broad list of active markets for the scanner to filter."""
-        # We switch to /markets to get flat, easy-to-read data
-        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=100&order=volume&ascending=false"
+        """Fetches only markets within the Climate/Science tag to avoid sports noise."""
+        # Tag 100381 is Climate, but let's also filter for 'active'
+        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&tag_id=100381&limit=100"
+        
         try:
             async with self._session.get(url) as resp:
                 data = await resp.json()
-                # Handle both list and dict responses
                 raw_markets = data if isinstance(data, list) else data.get('data', [])
-                logger.info(f"Gamma API /markets returned {len(raw_markets)} markets")
-                return [self.from_gamma_event(m) for m in raw_markets]
+                
+                # Filter locally to ENSURE it's weather-related
+                weather_markets = [
+                    self.from_gamma_event(m) for m in raw_markets 
+                    if any(kw in m.get('question', '').lower() for kw in ['temperature', 'weather', 'rain', 'snow', '°'])
+                ]
+                logger.info(f"Gamma API /markets returned {len(raw_markets)} markets, {len(weather_markets)} weather-related")
+                return weather_markets
         except Exception as e:
-            logger.error(f"Error fetching markets: {e}")
+            logger.error(f"Error fetching weather markets: {e}")
             return []
 
     @classmethod
