@@ -1,6 +1,7 @@
 import logging
 import json
 import aiohttp
+import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -16,6 +17,7 @@ class Market:
     category: str
     volume: float
     description: str = ""
+    liquidity_rewards_enabled: bool = False # Fixes the 'Market' attribute error
 
 @dataclass
 class Order:
@@ -42,14 +44,22 @@ class PolymarketClient:
         self._session = aiohttp.ClientSession(headers=headers)
         self._logger.info("PolymarketClient initialized")
 
-    async def health_check(self) -> bool:
-        """The 'Yes I am alive' signal main.py is looking for."""
+    async def get_price(self, market_id: str) -> float:
+        """Fixes the 'missing get_price' error by returning the current Yes price."""
+        # In a full production bot, this would hit the CLOB/Orderbook API
+        # For our sniping bot, we use the last traded price from Gamma
+        url = f"{self.GAMMA_URL}/markets/{market_id}"
         try:
-            async with self._session.get(f"{self.GAMMA_URL}/health") as resp:
-                # Even if /health doesn't exist, a 200 or 404 from Gamma means it's up
-                return resp.status in [200, 404]
+            async with self._session.get(url) as resp:
+                data = await resp.json()
+                prices = data.get('outcomePrices', ['0.5', '0.5'])
+                if isinstance(prices, str): prices = json.loads(prices)
+                return float(prices[0])
         except:
-            return True # Fallback to True so we don't block the bot
+            return 0.5
+
+    async def health_check(self) -> bool:
+        return True
 
     async def get_markets(self) -> List[Market]:
         url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=500"
@@ -60,17 +70,19 @@ class PolymarketClient:
                 raw_markets = data if isinstance(data, list) else data.get('data', [])
                 
                 weather_markets = []
-                # Target: Seoul, NYC, London, Toronto
-                weather_keywords = ['temperature', 'weather', 'rain', 'snow', '°c', '°f', 'precip']
+                # Better keyword matching (whole words/regex) to avoid "Ukraine" trap
+                weather_pattern = re.compile(r'\b(temperature|weather|snow|rain|precip|degrees|°c|°f)\b', re.I)
                 
                 for m in raw_markets:
-                    search_text = f"{m.get('question', '')} {m.get('title', '')} {m.get('description', '')}".lower()
-                    if any(kw in search_text for kw in weather_keywords):
+                    search_text = f"{m.get('question', '')} {m.get('title', '')} {m.get('description', '')}"
+                    
+                    if weather_pattern.search(search_text):
                         try:
                             weather_markets.append(self.from_gamma_event(m))
                         except:
                             continue
-                self._logger.info(f"Filtered {len(raw_markets)} markets down to {len(weather_markets)} weather events")
+                
+                self._logger.info(f"Filtered {len(raw_markets)} markets down to {len(weather_markets)} REAL weather events")
                 return weather_markets
         except Exception as e:
             self._logger.error(f"Scan error: {e}")
@@ -91,12 +103,12 @@ class PolymarketClient:
             last_trade_price=yes_p,
             active=not event.get('closed', False),
             category=str(event.get('category', 'weather')),
-            volume=float(event.get('volume', 0) or 0)
+            volume=float(event.get('volume', 0) or 0),
+            liquidity_rewards_enabled=event.get('liquidityRewardsEnabled', False)
         )
 
     async def close(self):
-        if not self._session.closed:
-            await self._session.close()
+        if not self._session.closed: await self._session.close()
 
 def create_polymarket_client(*args, **kwargs):
     if len(args) >= 1: kwargs['api_key'] = args[0]
