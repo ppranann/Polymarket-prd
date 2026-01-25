@@ -116,7 +116,7 @@ class MarketScanner:
         self,
         categories: Optional[List[str]] = None,
         price_threshold: Optional[float] = None,
-        require_liquidity_rewards: bool = True,
+        require_liquidity_rewards: bool = False,  # Changed to False for weather markets
         fetch_weather: bool = True
     ) -> ScanResult:
         """
@@ -438,7 +438,8 @@ class MarketScanner:
             'heat', 'cold', 'warm', 'freeze', 'frost', 'celsius',
             'seoul', 'london', 'incheon', 'nyc', 'new york', 'heathrow',
             'tokyo', 'paris', 'berlin', 'sydney', 'beijing', 'shanghai',
-            'hong kong', 'singapore', 'dubai', 'mumbai', 'delhi'
+            'hong kong', 'singapore', 'dubai', 'mumbai', 'delhi',
+            'highest temperature', 'lowest temperature', 'hottest', 'coldest'
         ]
         
         # Check category first
