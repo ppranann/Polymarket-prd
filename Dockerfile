@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY src/ ./src/
 COPY config.yaml .
+COPY *.py .
 
 # Create logs directory
 RUN mkdir -p /app/logs
