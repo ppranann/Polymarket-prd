@@ -259,6 +259,40 @@ class TomorrowIOClient:
         """Get human-readable weather description from code"""
         return WEATHER_CODES.get(code, f"Unknown ({code})")
     
+    async def get_realtime_weather(
+        self,
+        location_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fetch realtime weather using Tomorrow.io V4 API.
+        
+        Args:
+            location_name: Location name (city name)
+            
+        Returns:
+            Weather data dictionary or None if 404
+        """
+        # Tomorrow.io V4 Realtime Endpoint
+        url = "https://api.tomorrow.io/v4/weather/realtime"
+        params = {
+            "location": location_name,
+            "apikey": self.api_key,
+            "units": "metric"
+        }
+        
+        session = await self._get_session()
+        
+        try:
+            async with session.get(url, params=params) as resp:
+                if resp.status == 404:
+                    logger.error(f"Weather 404: Check if location '{location_name}' is valid.")
+                    return None
+                resp.raise_for_status()
+                return await resp.json()
+        except aiohttp.ClientError as e:
+            logger.error(f"Tomorrow.io realtime request failed: {e}")
+            return None
+    
     async def get_current_weather(
         self,
         location: Optional[Tuple[float, float]] = None

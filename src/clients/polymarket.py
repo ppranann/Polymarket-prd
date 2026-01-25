@@ -182,6 +182,16 @@ class PolymarketClient:
         self._logger.info("Cleanup: All pending paper orders cancelled.")
         return True
 
+    async def place_limit_order(self, market_id: str, side: str, price: float, size: float):
+        """Mock execution for PAPER trading mode."""
+        self._logger.info(f"PAPER ORDER: {side.upper()} {size} units @ ${price} on {market_id}")
+        return {"orderID": "mock-paper-id", "status": "SUCCESS"}
+
+    async def get_order_book(self, token_id: str):
+        """Mock order book to allow farming logic to calculate midpoints."""
+        # Returns a dummy spread so the farming logic doesn't crash
+        return {"bids": [{"price": "0.50", "size": "100"}], "asks": [{"price": "0.52", "size": "100"}]}
+
     def from_gamma_event(self, event: Dict) -> Market:
         raw_prices = event.get('outcomePrices', '["0.5", "0.5"]')
         prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices

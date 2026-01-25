@@ -146,9 +146,6 @@ class MarketScanner:
         self._scan_count += 1
         scan_time = datetime.now()
         
-        logger.info(f"Starting market scan #{self._scan_count}")
-        logger.info(f"Categories: {cats}, Price threshold: ${threshold:.4f}")
-        
         try:
             # Scan for weather markets using Hybrid Discovery (Tag 84)
             # This fetches all temperature bucket markets (Seoul, London, etc.)
@@ -159,18 +156,8 @@ class MarketScanner:
                 market = m  # Already a Market object from get_markets()
                 all_markets.append(market)
             
-            logger.info(f"Found {len(market_dicts)} temperature markets from API")
-            
             # Get current prices for all markets (free polling)
             prices = await self._get_current_prices(all_markets)
-            
-            # DEBUG: Log ALL markets with their titles and descriptions
-            for market in all_markets:
-                # Try multiple fields in case the Gamma object structure changed
-                title = getattr(market, 'question', '') or getattr(market, 'title', '') or "Unknown Title"
-                description = getattr(market, 'description', '')
-                
-                logger.info(f"DEBUG: Found Market - Title: '{title}' | Desc: '{description[:50]}...' | Price: ${market.yes_price:.4f}")
             
             # Filter for qualifying markets
             for market in all_markets:
@@ -190,10 +177,8 @@ class MarketScanner:
                         if needs_fetch:
                             logger.debug(f"Weather fetch needed for {market.id[:8]}...")
             
-            logger.info(
-                f"Scan complete: {len(all_markets)} total, "
-                f"{len(qualifying_markets)} qualifying"
-            )
+            # Summary log instead of per-bucket logging
+            logger.info(f"Scan #{self._scan_count} complete: Found {len(qualifying_markets)} active buckets.")
             
         except Exception as e:
             error = f"Critical scan error: {str(e)}"
@@ -419,17 +404,17 @@ class MarketScanner:
         """
         # Must be active
         if not market.active:
-            logger.debug(f"DEBUG: Skipping {market.id[:8]} - not active")
+            logger.debug(f"Skipping {market.id[:8]} - not active")
             return False
         
         # Must be below price threshold
         if market.yes_price >= threshold:
-            logger.debug(f"DEBUG: Skipping {market.id[:8]} - price ${market.yes_price:.4f} >= ${threshold:.4f}")
+            logger.debug(f"Skipping {market.id[:8]} - price ${market.yes_price:.4f} >= ${threshold:.4f}")
             return False
         
         # Must have Liquidity Rewards if required
         if require_rewards and not market.liquidity_rewards_enabled:
-            logger.debug(f"DEBUG: Skipping {market.id[:8]} - no liquidity rewards")
+            logger.debug(f"Skipping {market.id[:8]} - no liquidity rewards")
             return False
         
         # Extended weather keywords to catch more market types
@@ -445,25 +430,20 @@ class MarketScanner:
         # STRICT: Only accept if category is literally 'weather'
         category_lower = market.category.lower()
         if category_lower == 'weather':
-            logger.info(f"DEBUG: Found weather category market - {market.question[:60]}")
             return True
         
         # Also check the question AND description for weather keywords
         text_to_search = f"{market.question} {getattr(market, 'description', '')}".lower()
         
-        logger.debug(f"DEBUG: Checking market - {market.question[:50]}...")
-        
         if any(kw in text_to_search for kw in weather_keywords):
-            logger.info(f"DEBUG: Found weather market - {market.question[:80]}")
             return True
         
         # Also check config keywords
         if self._keywords:
             if any(kw in text_to_search for kw in self._keywords):
-                logger.info(f"DEBUG: Found market (keyword match) - {market.question}")
                 return True
         
-        logger.debug(f"DEBUG: Skipping {market.id[:8]} - no weather keywords in: {market.question[:50]}...")
+        logger.debug(f"Skipping {market.id[:8]} - no weather keywords in: {market.question[:50]}...")
         return False
     
     async def get_market_prices(
