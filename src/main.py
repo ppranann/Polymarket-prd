@@ -228,7 +228,7 @@ class TradingBot:
         logger.info(f"Mode: {'PAPER' if self.paper_trading else 'LIVE'}")
         logger.info(f"Initial Capital: ${self.config.risk.initial_capital:.2f}")
         logger.info(f"Max Trade Size: ${self.config.risk.max_trade_size:.2f}")
-        logger.info(f"Profit Target: {self.config.risk.profit_target:.0%}")
+        logger.info(f"Profit Target: {self.config.risk.profit_target}")
         logger.info("=" * 60)
         
         await self._main_loop()
