@@ -182,9 +182,9 @@ class PolymarketClient:
         self._logger.info("Cleanup: All pending paper orders cancelled.")
         return True
 
-    async def place_limit_order(self, market_id: str, side: str, price: float, size: float):
-        """Mock execution for PAPER trading mode."""
-        self._logger.info(f"PAPER ORDER: {side.upper()} {size} units @ ${price} on {market_id}")
+    async def place_limit_order(self, market_id: str, side: str, price: float, size: float, **kwargs):
+        """Mock hand for PAPER trading. **kwargs catches 'post_only' and stops the crash."""
+        self._logger.info(f"PAPER ORDER: {side.upper()} {size} @ ${price} on {market_id}")
         return {"orderID": "mock-paper-id", "status": "SUCCESS"}
 
     async def get_order_book(self, token_id: str):

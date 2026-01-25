@@ -3,6 +3,7 @@
 ## Issue 1: Missing Methods in PolymarketClient
 - [x] Add `place_limit_order()` method for paper trading
 - [x] Add `get_order_book()` method for farming logic
+- [x] Add `**kwargs` to catch 'post_only' parameter and prevent crash
 
 ## Issue 2: Tomorrow.io API 404
 - [x] Add `get_realtime_weather()` method with correct V4 endpoint
@@ -13,7 +14,12 @@
 - [x] Add summary logging at end of scan instead of per-bucket logging
 - [x] Remove "DEBUG:" prefix from all log messages
 
+## Issue 4: HTTP Library Noise
+- [x] Muzzle httpx library in main.py
+- [x] Muzzle aiohttp library in main.py
+
 ## Completion
 All fixes implemented and verified.
+
 
 
