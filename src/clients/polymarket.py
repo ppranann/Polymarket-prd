@@ -60,63 +60,47 @@ class PolymarketClient:
         return True
 
     async def get_markets(self) -> List[Market]:
-        """Deep search that handles the nested Event -> Market structure."""
-        # This endpoint mimics exactly what you did in the UI search bar
-        url = f"{self.GAMMA_URL}/public-search?query=temperature&active=true"
+        """Hybrid fetcher: Tries Search + Tag IDs to ensure zero misses."""
+        # 1. We'll try the Tag endpoint (Tag 100381 = Climate/Science)
+        # AND the search endpoint to bypass UI glitches
+        endpoints = [
+            f"{self.GAMMA_URL}/public-search?query=temperature&active=true",
+            f"{self.GAMMA_URL}/markets?active=true&closed=false&tag_id=100381&limit=100"
+        ]
         
-        try:
-            async with self._session.get(url) as resp:
-                data = await resp.json()
-                
-                self._logger.debug(f"API Response type: {type(data)}, keys: {data.keys() if isinstance(data, dict) else 'not a dict'}")
-                
-                # Try different response structures
-                events = []
-                
-                # 1. Try 'events' key (nested structure)
-                if isinstance(data, dict) and 'events' in data:
-                    events = data.get('events', [])
-                    self._logger.debug(f"Found 'events' key with {len(events)} events")
-                # 2. Try 'data' key
-                elif isinstance(data, dict) and 'data' in data:
-                    data_list = data.get('data', [])
-                    self._logger.debug(f"Found 'data' key with {len(data_list)} items")
-                    # Check if data items have nested 'markets'
-                    if data_list and isinstance(data_list[0], dict) and 'markets' in data_list[0]:
-                        events = data_list
-                    else:
-                        # Treat as flat market list
-                        events = [{'markets': data_list}]
-                # 3. Try as flat list
-                elif isinstance(data, list):
-                    self._logger.debug(f"Response is a flat list with {len(data)} items")
-                    events = [{'markets': data}]
-                else:
-                    self._logger.warning(f"Unknown response structure: {type(data)}")
-                
-                weather_markets = []
-                target_cities = ['seoul', 'nyc', 'london', 'incheon', 'toronto', 'dallas']
-                
-                for event in events:
-                    # 2. Extract markets from inside each event
-                    markets = event.get('markets', [])
-                    self._logger.debug(f"Event has {len(markets)} markets")
+        weather_markets = []
+        target_cities = ['seoul', 'nyc', 'new york', 'london', 'incheon', 'toronto', 'dallas']
+        
+        for url in endpoints:
+            try:
+                async with self._session.get(url) as resp:
+                    data = await resp.json()
                     
-                    for m in markets:
-                        title = m.get('question', '').lower()
+                    # Logic to handle BOTH list (markets) and dict (search/events) structures
+                    raw_data = []
+                    if isinstance(data, list):
+                        raw_data = data
+                    elif isinstance(data, dict):
+                        # Dig into search results or event wrappers
+                        raw_data = data.get('events', []) or data.get('data', []) or [data]
+                    
+                    for item in raw_data:
+                        # Handle both direct markets and markets nested in events
+                        nested_markets = item.get('markets', []) if isinstance(item, dict) else []
+                        potential_markets = [item] if 'question' in item else nested_markets
                         
-                        # 3. Only pull if it's one of our target cities
-                        if any(city in title for city in target_cities):
-                            self._logger.info(f"Found target market: {m.get('question', '')[:50]}...")
-                            # Pass the market dict to our parser
-                            weather_markets.append(self.from_gamma_event(m))
-                
-                self._logger.info(f"Scan #1: Parsed {len(events)} events, found {len(weather_markets)} targeted markets")
-                return weather_markets
-                
-        except Exception as e:
-            self._logger.error(f"Search API structure error: {e}")
-            return []
+                        for m in potential_markets:
+                            title = str(m.get('question', '') or m.get('title', '')).lower()
+                            if any(city in title for city in target_cities):
+                                weather_markets.append(self.from_gamma_event(m))
+                                
+            except Exception as e:
+                self._logger.debug(f"Endpoint {url} failed: {e}")
+        
+        # Remove duplicates based on ID
+        unique_markets = {m.id: m for m in weather_markets}.values()
+        self._logger.info(f"Scan complete: Found {len(unique_markets)} REAL weather markets")
+        return list(unique_markets)
 
     def from_gamma_event(self, event: Dict) -> Market:
         raw_prices = event.get('outcomePrices', '["0.5", "0.5"]')
