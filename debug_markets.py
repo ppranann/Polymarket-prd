@@ -40,12 +40,12 @@ async def debug_markets():
             print(f"    Total markets returned: {len(raw_markets)}")
         
         # Show all market titles
-        print("\n[2] ALL market titles (first 30):")
-        for i, m in enumerate(raw_markets[:30]):
+        print("\n[2] ALL market titles:")
+        for i, m in enumerate(raw_markets):
             title = m.get('question', m.get('title', 'Unknown'))
             active = m.get('active', True)
             category = m.get('category', '')
-            print(f"    {i+1}. [{'ACTIVE' if active else 'INACTIVE'}] [{category}] {title[:80]}")
+            print(f"    {i+1}. [{category}] {title}")
         
         # Check for London/weather markets with different patterns
         print("\n[3] Looking for London/weather markets...")
@@ -91,7 +91,7 @@ async def debug_markets():
             print(f"    '{term}': {count} markets")
         
         # What the scanner ACTUALLY looks for
-        print("\n[4] What the scanner will find (requires city + '°'):")
+        print("\n[7] What the scanner will find (requires city + '°'):")
         target_cities = ['seoul', 'london', 'incheon', 'city airport']
         qualifying = []
         for m in raw_markets:
