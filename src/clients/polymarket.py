@@ -11,9 +11,10 @@ logger = logging.getLogger(__name__)
 class Market:
     id: str
     question: str
-    condition_id: str
-    tokens: List[Dict[str, str]]
-    last_trade_price: float
+    description: str = ""
+    condition_id: str = ""
+    tokens: List[Dict[str, str]] = None
+    last_trade_price: float = 0.0
     # Additional fields for scanner compatibility
     active: bool = True
     yes_price: float = 0.0
@@ -21,6 +22,10 @@ class Market:
     category: str = ""
     liquidity_rewards_enabled: bool = False
     volume: float = 0.0
+    
+    def __post_init__(self):
+        if self.tokens is None:
+            self.tokens = []
 
 @dataclass
 class Order:
