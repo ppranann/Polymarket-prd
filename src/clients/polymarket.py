@@ -60,38 +60,37 @@ class PolymarketClient:
         return True
 
     async def get_markets(self) -> List[Market]:
-        """Uses broad search to find temperature-related markets that may be hidden from category tabs."""
-        # Use the broad search endpoint to find what the category tab is missing
-        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=100&query=temperature"
+        """Deep search that handles the nested Event -> Market structure."""
+        # This endpoint mimics exactly what you did in the UI search bar
+        url = f"{self.GAMMA_URL}/public-search?query=temperature&active=true"
         
         try:
             async with self._session.get(url) as resp:
-                if resp.status != 200: return []
                 data = await resp.json()
-                raw_markets = data if isinstance(data, list) else data.get('data', [])
+                
+                # 1. CRITICAL: Search returns a dict with an 'events' key
+                # It is NOT a flat list like the /markets endpoint
+                events = data.get('events', []) if isinstance(data, dict) else []
                 
                 weather_markets = []
-                # Weather keywords including exact market title format
-                weather_keywords = ['temperature', 'weather', 'highest temperature', '°c', '°f']
-                city_keywords = ['seoul', 'nyc', 'new york', 'dallas', 'miami', 'toronto']
+                target_cities = ['seoul', 'nyc', 'london', 'incheon', 'toronto', 'dallas']
                 
-                for m in raw_markets:
-                    search_text = f"{m.get('question', '')} {m.get('title', '')}".lower()
-                    
-                    # Must be weather-related AND one of our target cities
-                    is_weather = any(kw in search_text for kw in weather_keywords)
-                    is_target_city = any(city in search_text for city in city_keywords)
-                    
-                    if is_weather and is_target_city:
-                        try:
+                for event in events:
+                    # 2. Extract markets from inside each event
+                    markets = event.get('markets', [])
+                    for m in markets:
+                        title = m.get('question', '').lower()
+                        
+                        # 3. Only pull if it's one of our target cities
+                        if any(city in title for city in target_cities):
+                            # Pass the market dict to our parser
                             weather_markets.append(self.from_gamma_event(m))
-                        except:
-                            continue
                 
-                self._logger.info(f"Targeted scan: Found {len(weather_markets)} qualified weather snipes")
+                self._logger.info(f"Scan #1: Parsed {len(events)} events, found {len(weather_markets)} targeted markets")
                 return weather_markets
+                
         except Exception as e:
-            self._logger.error(f"Scan error: {e}")
+            self._logger.error(f"Search API structure error: {e}")
             return []
 
     def from_gamma_event(self, event: Dict) -> Market:
