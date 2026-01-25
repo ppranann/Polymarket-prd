@@ -81,24 +81,30 @@ class PolymarketClient:
             return False
 
     async def get_markets(self):
-        """Fetches only markets within the Climate/Science tag to avoid sports noise."""
-        # Tag 100381 is Climate, but let's also filter for 'active'
-        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&tag_id=100381&limit=100"
+        """Fetches and strictly filters for weather markets."""
+        # Broaden slightly to ensure we don't miss 'Recurring' or 'Science' categories
+        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=100"
         
         try:
             async with self._session.get(url) as resp:
                 data = await resp.json()
                 raw_markets = data if isinstance(data, list) else data.get('data', [])
                 
-                # Filter locally to ENSURE it's weather-related
-                weather_markets = [
-                    self.from_gamma_event(m) for m in raw_markets 
-                    if any(kw in m.get('question', '').lower() for kw in ['temperature', 'weather', 'rain', 'snow', '°'])
-                ]
-                logger.info(f"Gamma API /markets returned {len(raw_markets)} markets, {len(weather_markets)} weather-related")
+                weather_markets = []
+                for m in raw_markets:
+                    # Search across all possible text fields
+                    search_text = f"{m.get('question', '')} {m.get('title', '')} {m.get('description', '')}".lower()
+                    
+                    # Keywords that define a "Weather" market
+                    weather_keywords = ['temperature', 'weather', 'rain', 'snow', '°c', '°f', 'precip']
+                    
+                    if any(kw in search_text for kw in weather_keywords):
+                        weather_markets.append(self.from_gamma_event(m))
+                
+                self._logger.info(f"Filtered {len(raw_markets)} markets down to {len(weather_markets)} weather events")
                 return weather_markets
         except Exception as e:
-            logger.error(f"Error fetching weather markets: {e}")
+            self._logger.error(f"Error fetching/filtering markets: {e}")
             return []
 
     @classmethod
