@@ -150,17 +150,16 @@ class MarketScanner:
         logger.info(f"Categories: {cats}, Price threshold: ${threshold:.4f}")
         
         try:
-            # Scan for markets - ONLY use 'weather' category, NOT 'science' 
-            # (science category includes politics, sports, etc.)
-            scan_categories = ['weather']
-            market_dicts = await self.client.get_markets(categories=scan_categories)
+            # Scan for markets using TEMPERATURE query to find weather markets
+            # This searches the hidden metadata and finds Seoul/London/Incheon markets
+            market_dicts = await self.client.get_markets(query='temperature')
             
             # Convert Gamma API response to Market objects
             for m in market_dicts:
                 market = m  # Already a Market object from get_markets()
                 all_markets.append(market)
             
-            logger.debug(f"Found {len(market_dicts)} markets from Gamma API")
+            logger.info(f"Found {len(market_dicts)} temperature markets from API")
             
             # Get current prices for all markets (free polling)
             prices = await self._get_current_prices(all_markets)

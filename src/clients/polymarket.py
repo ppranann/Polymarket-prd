@@ -62,14 +62,16 @@ class PolymarketClient:
     async def get_markets(
         self,
         categories: Optional[List[str]] = None,
-        limit: int = 1000
+        limit: int = 1000,
+        query: Optional[str] = None
     ) -> List[Market]:
         """
-        Fetch markets from Gamma API.
+        Fetch markets from Gamma API with surgical query.
         
         Args:
             categories: Filter by category (e.g., ['weather', 'science', 'politics'])
             limit: Maximum number of markets to fetch (default 1000)
+            query: Search query for filtering (e.g., 'temperature')
             
         Returns:
             List of Market objects
@@ -77,33 +79,46 @@ class PolymarketClient:
         all_markets = []
         
         try:
-            # Strategy 1: Fetch by specific categories if provided
-            if categories:
-                for cat in categories:
-                    url = f"{self.GAMMA_URL}/markets?category={cat}&active=true&closed=false&limit={limit}"
-                    async with self._session.get(url) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            cat_markets = data if isinstance(data, list) else data.get('data', [])
-                            all_markets.extend(cat_markets)
-                            self._logger.info(f"Fetched {len(cat_markets)} markets from category '{cat}'")
+            # Build params with active filters
+            params = {
+                'active': 'true',
+                'closed': 'false',
+                'archived': 'false',
+                'limit': limit
+            }
             
-            # Strategy 2: Always fetch all active markets (no category filter)
-            # This catches markets that might not have the correct category tag
-            url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit={limit}"
-            async with self._session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    raw_markets = data if isinstance(data, list) else data.get('data', [])
-                    self._logger.info(f"Fetched {len(raw_markets)} total active markets")
-                    
-                    # Merge without duplicates
-                    existing_ids = {m.get('id') for m in all_markets}
-                    for m in raw_markets:
-                        if m.get('id') not in existing_ids:
-                            all_markets.append(m)
+            # Add query if provided
+            if query:
+                params['query'] = query
             
-            self._logger.info(f"Total unique markets to process: {len(all_markets)}")
+            # Strategy 1: Fetch with query parameter (temperature search)
+            # This hits the hidden metadata and finds weather markets
+            if query:
+                url = f"{self.GAMMA_URL}/markets"
+                async with self._session.get(url, params=params) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        raw_markets = data if isinstance(data, list) else data.get('data', [])
+                        self._logger.info(f"Query search '{query}': Found {len(raw_markets)} markets")
+                        
+                        # Filter for target cities
+                        target_cities = ['seoul', 'incheon', 'london', 'nyc', 'new york']
+                        for m in raw_markets:
+                            title = m.get('question', '').lower()
+                            if any(city in title for city in target_cities):
+                                all_markets.append(m)
+            
+            # Strategy 2: Fetch all active markets if no results yet
+            if not all_markets:
+                url = f"{self.GAMMA_URL}/markets"
+                async with self._session.get(url, params={k: v for k, v in params.items() if k != 'query'}) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        raw_markets = data if isinstance(data, list) else data.get('data', [])
+                        self._logger.info(f"All active markets: Found {len(raw_markets)}")
+                        all_markets = raw_markets
+            
+            self._logger.info(f"Total markets to process: {len(all_markets)}")
             
             # Convert to Market objects
             markets = []
