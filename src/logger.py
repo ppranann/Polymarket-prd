@@ -180,7 +180,7 @@ class AuditLogger:
         )
         
         # Log to console for debugging - safely handle alpha formatting
-        alpha_str = f"{alpha:.1%}" if isinstance(alpha, (int, float)) else str(alpha) if alpha else "N/A"
+        alpha_str = f"{float(alpha or 0):.2%}"
         logger.info(
             f"AUDIT: {event_type} | {action or 'N/A'} | "
             f"Market: {market_id or 'N/A'} | "

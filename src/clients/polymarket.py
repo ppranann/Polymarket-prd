@@ -177,7 +177,7 @@ class PolymarketClient:
             liquidity_rewards_enabled=market.get('liquidityRewardsEnabled', False)
         )
 
-    async def cancel_all_orders(self):
+    async def cancel_all_orders(self, *args, **kwargs):
         """Fixes the 'object has no attribute' error during shutdown."""
         self._logger.info("Cleanup: All pending paper orders cancelled.")
         return True

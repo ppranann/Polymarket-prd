@@ -387,7 +387,7 @@ class TradingBot:
         if signal.action in ["BUY", "SELL"]:
             logger.info(
                 f"Alpha signal: {signal.action} | "
-                f"Alpha: {signal.alpha:.1%} | "
+                f"Alpha: {float(signal.alpha):.1%} | "
                 f"Multiplier: {signal.size_multiplier:.1f}x"
             )
             

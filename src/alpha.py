@@ -265,19 +265,19 @@ class AlphaDetector:
         # Generate recommendation
         if action == "BUY":
             recommendation = (
-                f"Strong buy signal: Market is {alpha:.1%} underpriced. "
+                f"Strong buy signal: Market is {float(alpha):.1%} underpriced. "
                 f"Fair price: ${fair_price:.4f}, Market: ${market_price:.4f}. "
                 f"Increase position by {multiplier:.1f}x"
             )
         elif action == "SELL":
             recommendation = (
-                f"Sell signal: Market is {abs(alpha):.1%} overpriced. "
+                f"Sell signal: Market is {abs(float(alpha)):.1%} overpriced. "
                 f"Fair price: ${fair_price:.4f}, Market: ${market_price:.4f}"
             )
         else:
             recommendation = (
                 f"Hold: Market is fairly priced. "
-                f"Difference: {alpha:.1%}"
+                f"Difference: {float(alpha):.1%}"
             )
         
         signal = AlphaSignal(
