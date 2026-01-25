@@ -293,11 +293,11 @@ class OrderExecutor:
             orders_placed.append(sell_order)
             logger.info(f"Farming SELL: {size} @ ${sell_price:.4f} (mid: ${midpoint:.4f})")
             
-            # Track the farming position
+            # Track the farming position (use dict access for mock responses)
             farming_pos = FarmingPosition(
                 market_id=market_id,
-                buy_order_id=buy_order.order_id,
-                sell_order_id=sell_order.order_id,
+                buy_order_id=buy_order["orderID"],
+                sell_order_id=sell_order["orderID"],
                 midpoint=midpoint,
                 created_at=datetime.now(),
                 last_rebalance=datetime.now(),
@@ -319,9 +319,10 @@ class OrderExecutor:
         except Exception as e:
             logger.error(f"Adjusted midpoint farming failed: {e}")
             
-            # Cancel any placed orders
+            # Cancel any placed orders (use dict access)
             for order in orders_placed:
-                await self.client.cancel_order(order.order_id)
+                order_id = order.get("orderID") if isinstance(order, dict) else order.order_id
+                await self.client.cancel_order(order_id)
             
             return ExecutionResult(
                 success=False,
@@ -543,8 +544,8 @@ class OrderExecutor:
                 f"on {market.id[:8]}... (Post-Only: {post_only})"
             )
             
-            # Track order
-            self._recent_orders[order.order_id] = datetime.now()
+            # Track order (use dict access for mock responses)
+            self._recent_orders[order["orderID"]] = datetime.now()
             
             # Track position in risk manager (for BUY orders)
             if side == "BUY":

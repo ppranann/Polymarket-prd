@@ -192,6 +192,21 @@ class PolymarketClient:
         # Returns a dummy spread so the farming logic doesn't crash
         return {"bids": [{"price": "0.50", "size": "100"}], "asks": [{"price": "0.52", "size": "100"}]}
 
+    async def cancel_order(self, order_id: str) -> bool:
+        """Cancel an order. For paper trading, always returns success."""
+        self._logger.info(f"PAPER CANCEL: Order {order_id}")
+        return True
+
+    async def cancel_all_orders(self, *args, **kwargs):
+        """Fixes the 'object has no attribute' error during shutdown."""
+        self._logger.info("Cleanup: All pending paper orders cancelled.")
+        return True
+
+    async def place_limit_order(self, market_id: str, side: str, price: float, size: float, **kwargs):
+        """Mock hand for PAPER trading. **kwargs catches 'post_only' and stops the crash."""
+        self._logger.info(f"PAPER ORDER: {side.upper()} {size} @ ${price} on {market_id}")
+        return {"orderID": "mock-paper-id", "status": "SUCCESS"}
+
     def from_gamma_event(self, event: Dict) -> Market:
         raw_prices = event.get('outcomePrices', '["0.5", "0.5"]')
         prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices

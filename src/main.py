@@ -365,19 +365,15 @@ class TradingBot:
             weather = None
         
         # Step 3: Calculate fair price
-        if weather:
-            calculation = self._calculator.calculate_fair_price_from_weather(
-                weather_data=weather,
-                market_condition=market.question,
-                market_price=current_price
-            )
-        else:
-            calculation = self._calculator.calculate_fair_price(
-                market_condition=market.question,
-                forecasted_temp=65.0,  # Default
-                expected_temp=65.0,
-                market_price=current_price
-            )
+        if not weather:
+            logger.debug(f"Weather unavailable for {market.id[:8]}, skipping...")
+            return  # SKIP market instead of returning fake alpha
+        
+        calculation = self._calculator.calculate_fair_price_from_weather(
+            weather_data=weather,
+            market_condition=market.question,
+            market_price=current_price
+        )
         
         # Step 4: Analyze alpha
         signal = self._alpha_detector.analyze_market(
