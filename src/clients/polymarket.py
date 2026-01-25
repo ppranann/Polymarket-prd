@@ -65,41 +65,46 @@ class PolymarketClient:
         limit: int = 1000,
         query: Optional[str] = None
     ) -> List[Market]:
-        """Tag-based Discovery: Finds weather markets via Climate & Science tag."""
-        # Tag 100381 is the 'Climate & Science' bucket where weather lives
-        url = f"{self.GAMMA_URL}/events?active=true&closed=false&tag_id=100381"
+        """
+        Hybrid Discovery: Uses Tag 84 (Weather) with surgical filtering.
+        
+        Strategy:
+        - Tag 84 is the confirmed Weather tag (from CURL)
+        - Filter for "highest temperature" title format
+        - Target specific cities: london, seoul, incheon, new york, nyc
+        
+        This is more efficient than iterating all events.
+        """
+        # Hybrid Discovery: Tag 84 + "highest temperature" filter
+        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&tag_id=84&limit=100"
         
         try:
             async with self._session.get(url) as resp:
-                events = await resp.json()
-                # Events endpoint returns a list of event objects
-                events = events if isinstance(events, list) else events.get('data', [])
+                data = await resp.json()
+                raw_markets = data if isinstance(data, list) else data.get('data', [])
                 
                 weather_markets = []
-                # Target keywords for city-specific weather
-                target_cities = ['seoul', 'london', 'incheon', 'nyc', 'new york']
+                # Target cities confirmed in the JSON
+                target_cities = ['london', 'seoul', 'incheon', 'new york', 'nyc']
                 
-                print("--- REAL WEATHER EVENTS LIVE NOW ---")
-                for e in events:
-                    slug = e.get('slug', '')
-                    title = e.get('title', '').lower()
-                    
-                    print(f"Slug: {slug}")
-                    
-                    # Check if this event is about our target cities
-                    if any(city in title for city in target_cities):
-                        print(f"  📍 Found Target: {title}")
-                        
-                        for m in e.get('markets', []):
-                            try:
-                                weather_markets.append(self.from_gamma_event(m))
-                            except:
-                                continue
+                print("--- HYBRID DISCOVERY: Scanning Tag 84 ---")
                 
-                self._logger.info(f"Tag-Based Discovery: Found {len(weather_markets)} weather markets")
+                for m in raw_markets:
+                    title = m.get('question', '').lower()
+                    
+                    # Sniper Logic: Must be a target city AND 'highest temperature' format
+                    if any(city in title for city in target_cities) and 'highest temperature' in title:
+                        print(f"  🎯 Found: {m.get('question', '')[:80]}")
+                        try:
+                            weather_markets.append(self.from_gamma_event(m))
+                        except Exception as e:
+                            self._logger.warning(f"Failed to convert market: {e}")
+                            continue
+                
+                self._logger.info(f"Hybrid Discovery: Found {len(weather_markets)} REAL temperature buckets")
                 return weather_markets
         except Exception as e:
-            self._logger.error(f"Tag Discovery Error: {e}")
+            self._logger.error(f"Hybrid Discovery Error: {e}")
             return []
 
     async def cancel_all_orders(self):
