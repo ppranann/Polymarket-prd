@@ -74,6 +74,22 @@ async def debug_markets():
         for m in temp_markets[:5]:
             print(f"      - {m.get('question', '')[:80]}")
         
+        # Pattern 5: All categories
+        print("\n[5] ALL unique categories:")
+        categories = {}
+        for m in raw_markets:
+            cat = m.get('category', 'None')
+            categories[cat] = categories.get(cat, 0) + 1
+        for cat, count in sorted(categories.items(), key=lambda x: -x[1])[:20]:
+            print(f"    {cat}: {count}")
+        
+        # Pattern 6: Other weather terms
+        print("\n[6] Checking for other weather-related terms:")
+        weather_terms = ['rain', 'snow', 'storm', 'cloud', 'sun', 'forecast', 'climate']
+        for term in weather_terms:
+            count = len([m for m in raw_markets if term in m.get('question', '').lower()])
+            print(f"    '{term}': {count} markets")
+        
         # What the scanner ACTUALLY looks for
         print("\n[4] What the scanner will find (requires city + '°'):")
         target_cities = ['seoul', 'london', 'incheon', 'city airport']
