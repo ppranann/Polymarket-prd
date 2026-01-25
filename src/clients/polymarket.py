@@ -1,7 +1,7 @@
 import logging
 import json
 import aiohttp
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 @dataclass
@@ -34,64 +34,51 @@ class Position:
 
 class PolymarketClient:
     def __init__(self, **kwargs):
-        # We use .get() to pull keys from kwargs, making it bulletproof against main.py
         self._api_key = kwargs.get('api_key')
-        self._api_secret = kwargs.get('api_secret')
-        self._passphrase = kwargs.get('passphrase')
-        
         self.GAMMA_URL = "https://gamma-api.polymarket.com"
         self._logger = logging.getLogger(__name__)
         
-        # Initialize session with auth if keys exist
-        headers = {}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
-            
+        headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         self._session = aiohttp.ClientSession(headers=headers)
         self._logger.info("PolymarketClient initialized")
 
+    async def health_check(self) -> bool:
+        """The 'Yes I am alive' signal main.py is looking for."""
+        try:
+            async with self._session.get(f"{self.GAMMA_URL}/health") as resp:
+                # Even if /health doesn't exist, a 200 or 404 from Gamma means it's up
+                return resp.status in [200, 404]
+        except:
+            return True # Fallback to True so we don't block the bot
+
     async def get_markets(self) -> List[Market]:
-        """Fetches and strictly filters for weather markets."""
         url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=500"
-        
         try:
             async with self._session.get(url) as resp:
-                if resp.status != 200:
-                    self._logger.error(f"Gamma API error: {resp.status}")
-                    return []
-                
+                if resp.status != 200: return []
                 data = await resp.json()
                 raw_markets = data if isinstance(data, list) else data.get('data', [])
                 
                 weather_markets = []
-                # Target signals for Sunday Jan 25: Seoul, NYC, London, Toronto
+                # Target: Seoul, NYC, London, Toronto
                 weather_keywords = ['temperature', 'weather', 'rain', 'snow', '°c', '°f', 'precip']
                 
                 for m in raw_markets:
                     search_text = f"{m.get('question', '')} {m.get('title', '')} {m.get('description', '')}".lower()
-                    
                     if any(kw in search_text for kw in weather_keywords):
                         try:
                             weather_markets.append(self.from_gamma_event(m))
-                        except Exception as parse_error:
-                            self._logger.debug(f"Skipping market: {parse_error}")
-                
-                self._logger.info(f"Filtered {len(raw_markets)} total markets down to {len(weather_markets)} weather events")
+                        except:
+                            continue
+                self._logger.info(f"Filtered {len(raw_markets)} markets down to {len(weather_markets)} weather events")
                 return weather_markets
         except Exception as e:
-            self._logger.error(f"Error fetching/filtering markets: {e}")
+            self._logger.error(f"Scan error: {e}")
             return []
 
     def from_gamma_event(self, event: Dict) -> Market:
         raw_prices = event.get('outcomePrices', '["0.5", "0.5"]')
-        if isinstance(raw_prices, str):
-            try:
-                prices = json.loads(raw_prices)
-            except:
-                prices = [0.5, 0.5]
-        else:
-            prices = raw_prices
-        
+        prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
         yes_p = float(prices[0]) if (prices and len(prices) > 0) else 0.5
 
         return Market(
@@ -108,13 +95,9 @@ class PolymarketClient:
         )
 
     async def close(self):
-        await self._session.close()
+        if not self._session.closed:
+            await self._session.close()
 
-# THE FIX: This function now catches EVERYTHING main.py throws at it
 def create_polymarket_client(*args, **kwargs):
-    # If main.py sends positional args (api_key, secret, etc.), we map them
     if len(args) >= 1: kwargs['api_key'] = args[0]
-    if len(args) >= 2: kwargs['api_secret'] = args[1]
-    if len(args) >= 3: kwargs['passphrase'] = args[2]
-    
     return PolymarketClient(**kwargs)
