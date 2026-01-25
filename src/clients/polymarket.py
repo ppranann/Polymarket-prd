@@ -60,47 +60,43 @@ class PolymarketClient:
         return True
 
     async def get_markets(self) -> List[Market]:
-        """Hybrid fetcher: Tries Search + Tag IDs to ensure zero misses."""
-        # 1. We'll try the Tag endpoint (Tag 100381 = Climate/Science)
-        # AND the search endpoint to bypass UI glitches
-        endpoints = [
-            f"{self.GAMMA_URL}/public-search?query=temperature&active=true",
-            f"{self.GAMMA_URL}/markets?active=true&closed=false&tag_id=100381&limit=100"
-        ]
+        """Hybrid fetcher: Pulls all active markets and surgically filters them."""
+        # We use the 'markets' endpoint because it's the Source of Truth
+        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=1000"
         
-        weather_markets = []
-        target_cities = ['seoul', 'nyc', 'new york', 'london', 'incheon', 'toronto', 'dallas']
-        
-        for url in endpoints:
-            try:
-                async with self._session.get(url) as resp:
-                    data = await resp.json()
+        try:
+            async with self._session.get(url) as resp:
+                data = await resp.json()
+                
+                # Markets endpoint returns a flat list
+                raw_markets = data if isinstance(data, list) else data.get('data', [])
+                
+                weather_markets = []
+                # Use the exact city strings you saw in your manual search
+                target_cities = ['seoul', 'nyc', 'new york', 'incheon', 'london', 'toronto', 'dallas']
+                # Keywords to verify it's a temperature market
+                temp_keywords = ['temperature', 'highest', 'degrees', '°c', '°f']
+                
+                for m in raw_markets:
+                    # Search across the Title, Question, and Description
+                    search_text = f"{m.get('question', '')} {m.get('title', '')} {m.get('description', '')}".lower()
                     
-                    # Logic to handle BOTH list (markets) and dict (search/events) structures
-                    raw_data = []
-                    if isinstance(data, list):
-                        raw_data = data
-                    elif isinstance(data, dict):
-                        # Dig into search results or event wrappers
-                        raw_data = data.get('events', []) or data.get('data', []) or [data]
+                    # Surgical Sniper Logic: Must be a target city AND about temperature
+                    has_city = any(city in search_text for city in target_cities)
+                    has_temp = any(kw in search_text for kw in temp_keywords)
                     
-                    for item in raw_data:
-                        # Handle both direct markets and markets nested in events
-                        nested_markets = item.get('markets', []) if isinstance(item, dict) else []
-                        potential_markets = [item] if 'question' in item else nested_markets
-                        
-                        for m in potential_markets:
-                            title = str(m.get('question', '') or m.get('title', '')).lower()
-                            if any(city in title for city in target_cities):
-                                weather_markets.append(self.from_gamma_event(m))
-                                
-            except Exception as e:
-                self._logger.debug(f"Endpoint {url} failed: {e}")
-        
-        # Remove duplicates based on ID
-        unique_markets = {m.id: m for m in weather_markets}.values()
-        self._logger.info(f"Scan complete: Found {len(unique_markets)} REAL weather markets")
-        return list(unique_markets)
+                    if has_city and has_temp:
+                        try:
+                            weather_markets.append(self.from_gamma_event(m))
+                        except Exception as parse_err:
+                            self._logger.debug(f"Skipping market {m.get('id')}: {parse_err}")
+                
+                self._logger.info(f"Surgical Scan: Checked {len(raw_markets)} markets, found {len(weather_markets)} REAL weather events")
+                return weather_markets
+                
+        except Exception as e:
+            self._logger.error(f"Global Market Scan Error: {e}")
+            return []
 
     def from_gamma_event(self, event: Dict) -> Market:
         raw_prices = event.get('outcomePrices', '["0.5", "0.5"]')
