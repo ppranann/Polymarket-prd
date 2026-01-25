@@ -76,17 +76,28 @@ class PolymarketClient:
         - Check acceptingOrders and !closed for active markets
         
         API Structure:
-        /events?tag_id=84
+        /events?tag=84&active=true&closed=false
           -> events[].slug = "highest-temperature-in-london-on-january-25"
           -> events[].markets = [{ groupItemTitle: "7°C", acceptingOrders: true, ... }]
         """
         # Tag 84 returns EVENTS with nested markets
-        url = f"{self.GAMMA_URL}/events?tag_id=84&active=true&limit=100"
+        # Try both tag and tag_id parameters
+        url = f"{self.GAMMA_URL}/events?tag=84&active=true&closed=false&limit=100"
         
         try:
             async with self._session.get(url) as resp:
                 data = await resp.json()
+                
+                # DEBUG: Print raw response info
+                print(f"DEBUG: API URL: {url}")
+                print(f"DEBUG: Response type: {type(data)}")
+                
                 events = data if isinstance(data, list) else data.get('data', [])
+                print(f"DEBUG: Total events returned: {len(events)}")
+                
+                # Print first 3 events for debugging
+                for i, event in enumerate(events[:3]):
+                    print(f"  DEBUG Event {i}: slug='{event.get('slug', '')[:50]}' | title='{event.get('title', '')[:50]}' | markets={len(event.get('markets', []))}")
                 
                 weather_markets = []
                 # Target cities - match ANY city name in slug/title
