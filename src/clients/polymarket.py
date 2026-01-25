@@ -65,35 +65,41 @@ class PolymarketClient:
         limit: int = 1000,
         query: Optional[str] = None
     ) -> List[Market]:
-        """Global Fetcher: Pulls everything active and filters by city name."""
-        # This hits the main list of all active markets (usually ~500-800)
-        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=1000"
+        """Tag-based Discovery: Finds weather markets via Climate & Science tag."""
+        # Tag 100381 is the 'Climate & Science' bucket where weather lives
+        url = f"{self.GAMMA_URL}/events?active=true&closed=false&tag_id=100381"
         
         try:
             async with self._session.get(url) as resp:
-                data = await resp.json()
-                raw_markets = data if isinstance(data, list) else data.get('data', [])
+                events = await resp.json()
+                # Events endpoint returns a list of event objects
+                events = events if isinstance(events, list) else events.get('data', [])
                 
                 weather_markets = []
-                # Exact keywords found in live 2026 contracts
+                # Target keywords for city-specific weather
                 target_cities = ['seoul', 'london', 'incheon', 'nyc', 'new york']
                 
-                for m in raw_markets:
-                    # Search title and question for city names
-                    search_text = f"{m.get('question', '')} {m.get('title', '')}".lower()
+                print("--- REAL WEATHER EVENTS LIVE NOW ---")
+                for e in events:
+                    slug = e.get('slug', '')
+                    title = e.get('title', '').lower()
                     
-                    if any(city in search_text for city in target_cities):
-                        # Verify it's a temperature market (not a sports team)
-                        if any(kw in search_text for kw in ['temperature', 'highest', '°', 'degrees']):
+                    print(f"Slug: {slug}")
+                    
+                    # Check if this event is about our target cities
+                    if any(city in title for city in target_cities):
+                        print(f"  📍 Found Target: {title}")
+                        
+                        for m in e.get('markets', []):
                             try:
                                 weather_markets.append(self.from_gamma_event(m))
                             except:
                                 continue
                 
-                self._logger.info(f"Sledgehammer Scan: Checked {len(raw_markets)} markets, found {len(weather_markets)} targets")
+                self._logger.info(f"Tag-Based Discovery: Found {len(weather_markets)} weather markets")
                 return weather_markets
         except Exception as e:
-            self._logger.error(f"Global Scan Error: {e}")
+            self._logger.error(f"Tag Discovery Error: {e}")
             return []
 
     async def cancel_all_orders(self):
