@@ -17,7 +17,7 @@ class Market:
     category: str
     volume: float
     description: str = ""
-    liquidity_rewards_enabled: bool = False # Fixes the 'Market' attribute error
+    liquidity_rewards_enabled: bool = False
 
 @dataclass
 class Order:
@@ -46,8 +46,6 @@ class PolymarketClient:
 
     async def get_price(self, market_id: str) -> float:
         """Fixes the 'missing get_price' error by returning the current Yes price."""
-        # In a full production bot, this would hit the CLOB/Orderbook API
-        # For our sniping bot, we use the last traded price from Gamma
         url = f"{self.GAMMA_URL}/markets/{market_id}"
         try:
             async with self._session.get(url) as resp:
@@ -62,7 +60,10 @@ class PolymarketClient:
         return True
 
     async def get_markets(self) -> List[Market]:
-        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&limit=500"
+        """Strictly fetches markets from Climate, Science, and Weather categories."""
+        # Using the specific Climate/Science tag (100381)
+        url = f"{self.GAMMA_URL}/markets?active=true&closed=false&tag_id=100381&limit=100"
+        
         try:
             async with self._session.get(url) as resp:
                 if resp.status != 200: return []
@@ -70,19 +71,24 @@ class PolymarketClient:
                 raw_markets = data if isinstance(data, list) else data.get('data', [])
                 
                 weather_markets = []
-                # Better keyword matching (whole words/regex) to avoid "Ukraine" trap
-                weather_pattern = re.compile(r'\b(temperature|weather|snow|rain|precip|degrees|°c|°f)\b', re.I)
+                # Weather keywords and target city keywords
+                weather_keywords = ['temperature', 'weather', 'rain', 'snow', '°', 'degrees']
+                city_keywords = ['seoul', 'nyc', 'new york', 'london', 'heathrow', 'incheon']
                 
                 for m in raw_markets:
-                    search_text = f"{m.get('question', '')} {m.get('title', '')} {m.get('description', '')}"
+                    search_text = f"{m.get('question', '')} {m.get('title', '')}".lower()
                     
-                    if weather_pattern.search(search_text):
+                    # Must be weather-related AND one of our target cities
+                    is_weather = any(kw in search_text for kw in weather_keywords)
+                    is_target_city = any(city in search_text for city in city_keywords)
+                    
+                    if is_weather and is_target_city:
                         try:
                             weather_markets.append(self.from_gamma_event(m))
                         except:
                             continue
                 
-                self._logger.info(f"Filtered {len(raw_markets)} markets down to {len(weather_markets)} REAL weather events")
+                self._logger.info(f"Targeted scan: Found {len(weather_markets)} qualified weather snipes")
                 return weather_markets
         except Exception as e:
             self._logger.error(f"Scan error: {e}")
@@ -113,3 +119,4 @@ class PolymarketClient:
 def create_polymarket_client(*args, **kwargs):
     if len(args) >= 1: kwargs['api_key'] = args[0]
     return PolymarketClient(**kwargs)
+
