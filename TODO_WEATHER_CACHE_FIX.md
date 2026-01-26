@@ -19,9 +19,17 @@
 - ✅ Fixed response parsing from `data.timelines` to `timelines.hourly`
 - ✅ Updated `_process_weather_response()` in main.py to handle V4 format
 
+### Step 4: Replace analysis loop with grouped city approach ✅
+- ✅ Markets grouped by city before processing
+- ✅ Single API call per city with 3-second "Penalty Box" sleep
+- ✅ Removed "Analyzing {market.id}..." log line
+- ✅ Renamed `_analyze_with_cached_weather` to `_analyze_single_market`
+- ✅ Now only 1 log line per city instead of 53 lines per scan
+
 ### Result:
 - **API calls reduced** from 54 per scan to just 3 (one per unique city)
-- **Log spam reduced** by removing detailed weather fetch logs
+- **Log spam reduced** by removing detailed weather fetch and analysis logs
 - **EC2 disk space saved** by silencing detailed discovery logs
 - **API response format fixed** for Tomorrow.io V4
+- **Clean output**: One line per city group ("Fetching weather for london group (18 markets)...")
 

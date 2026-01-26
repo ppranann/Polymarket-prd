@@ -289,33 +289,26 @@ class TradingBot:
     async def _scan_and_trade(self):
         """Scan markets and execute trades"""
         scan_start = datetime.now()
-        
+
         logger.info(f"Scan #{self._scan_count} starting...")
-        
-        # Track failed cities for batch logging
-        failed_cities = []
-        
-        # Weather cache for this scan (temperature doesn't change every second!)
-        # Reduces API calls from 54 per scan to just 3 (one per city)
-        weather_cache: Dict[str, Any] = {}
-        
+
         try:
             # Step 1: Scan for qualifying markets
             result = await self._scanner.scan()
             self._last_scan_time = scan_start
-            
+
             if result.errors:
                 for error in result.errors:
                     logger.warning(f"Scan warning: {error}")
-            
+
             if not result.qualifying_markets:
                 logger.info("No qualifying markets found")
                 return
-            
+
             logger.info(
                 f"Found {len(result.qualifying_markets)} qualifying markets"
             )
-            
+
             # Log scan result
             await self._logger.log_scan(
                 markets_found=result.markets_found,
@@ -323,56 +316,60 @@ class TradingBot:
                 scan_duration_ms=(datetime.now() - scan_start).total_seconds() * 1000,
                 errors=result.errors
             )
-            
+
             # Step 2: Get current prices using get_price (not get_book)
             prices = await self._scanner.get_market_prices(result.qualifying_markets)
-            
-            # Step 3: Analyze each market with weather caching
+
+            # Step 3: Group markets by city to avoid duplicate API calls
+            markets_by_city: Dict[str, List] = {}
             for market in result.qualifying_markets:
-                try:
-                    # Extract city name for weather caching
-                    city_name = self._extract_city_from_market(market)
-                    
-                    # 🎯 CACHE FIX: Only fetch weather if we haven't seen this city in THIS scan
-                    if city_name not in weather_cache:
-                        logger.info(f"☁️ Fetching fresh weather for {city_name}...")
-                        weather_raw = await self._weather_client.get_forecast_by_city(city_name)
-                        if weather_raw:
-                            weather_cache[city_name] = await self._process_weather_response(weather_raw)
-                        else:
-                            weather_cache[city_name] = None
-                        # Small delay to be polite to the API
-                        await asyncio.sleep(1)
-                    
-                    # Use cached weather data
-                    weather_data = weather_cache.get(city_name)
-                    
-                    # Process the market with cached weather
-                    weather_failed = await self._analyze_with_cached_weather(
-                        market,
-                        prices.get(market.id, market.yes_price),
-                        weather_data
-                    )
-                    
-                    # Track failed cities for batch logging
-                    if weather_failed:
-                        failed_cities.append(weather_failed)
-                        
-                except Exception as e:
-                    logger.error(f"Error analyzing {market.id}: {e}")
-                    await self._logger.log_error(
-                        error_type="MARKET_ANALYSIS_ERROR",
-                        error_message=str(e),
-                        market_id=market.id
-                    )
-            
-            # Step 4: Log weather failures ONCE at end of scan (stop log spam)
-            if failed_cities:
-                unique_fails = set(failed_cities)
-                logger.warning(
-                    f"Scan complete. Weather data missing for: {', '.join(unique_fails)}"
-                )
-            
+                city = self._extract_city_from_market(market).lower()
+                if city not in markets_by_city:
+                    markets_by_city[city] = []
+                markets_by_city[city].append(market)
+
+            # Step 4: Process city by city with mandatory "Penalty Box" sleep
+            for city, city_markets in markets_by_city.items():
+                logger.info(f"☁️ Fetching weather for {city} group ({len(city_markets)} markets)...")
+
+                # Mandatory 3-second 'Politeness Sleep' to clear any pending 429s
+                await asyncio.sleep(3)
+
+                # Fetch weather ONCE for this city
+                weather_raw = await self._weather_client.get_forecast_by_city(city)
+
+                if not weather_raw:
+                    logger.warning(f"❌ Skipping {city} - API rate-limited or failed.")
+                    continue
+
+                # Process weather response
+                weather_data = await self._process_weather_response(weather_raw)
+
+                if not weather_data:
+                    logger.warning(f"❌ Skipping {city} - could not parse weather data.")
+                    continue
+
+                # Step 5: Analyze ALL markets for THIS city using the single fetch
+                for market in city_markets:
+                    try:
+                        current_price = prices.get(market.id, market.yes_price)
+
+                        # Skip individual analyzing log - we already logged city group
+                        # Process market with pre-fetched weather
+                        await self._analyze_single_market(
+                            market=market,
+                            current_price=current_price,
+                            weather_data=weather_data
+                        )
+
+                    except Exception as e:
+                        logger.error(f"Error on {market.id}: {e}")
+                        await self._logger.log_error(
+                            error_type="MARKET_ANALYSIS_ERROR",
+                            error_message=str(e),
+                            market_id=market.id
+                        )
+
         except Exception as e:
             logger.error(f"Scan and trade error: {e}")
             await self._logger.log_error(
@@ -380,42 +377,40 @@ class TradingBot:
                 error_message=str(e)
             )
     
-    async def _analyze_with_cached_weather(
+    async def _analyze_single_market(
         self,
         market,
         current_price: float,
         weather_data
-    ) -> Optional[str]:
+    ) -> None:
         """
         Analyze a single market using pre-fetched weather data.
-        
+
         Args:
             market: Market to analyze
             current_price: Current market price
-            weather_data: Pre-fetched WeatherData object or None
-            
+            weather_data: Pre-fetched WeatherData object
+
         Returns:
-            City name if weather fetch failed, None otherwise
+            None
         """
-        logger.info(f"Analyzing {market.id[:8]}... (Price: ${current_price:.4f})")
-        
         # Step 1: Risk check
         can_trade, reason = self._risk_manager.validate_market_filter(
             market_price=current_price,
             market_id=market.id
         )
-        
+
         if not can_trade:
             logger.debug(f"Skipping {market.id[:8]}...: {reason}")
-            return None
-        
+            return
+
         # Step 2: Get city name
         city_name = self._extract_city_from_market(market)
-        
+
         # Step 3: Check if we have weather data
         if not weather_data:
             logger.debug(f"Weather unavailable for {city_name}, skipping...")
-            return city_name  # Return city name for batch logging
+            return
         
         calculation = self._calculator.calculate_fair_price_from_weather(
             weather_data=weather_data,
