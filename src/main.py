@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Any
 from .config import load_config, BotConfig
 from .secrets_manager import load_bot_secrets, SecretsManager
 from .clients.polymarket import create_polymarket_client, PolymarketClient
-from .clients.tomorrow_io import create_tomorrow_io_client, TomorrowIOClient
+from .clients.tomorrow_client import create_tomorrow_client, RateLimitConfig
 from .calculator import create_calculator, FairPriceCalculator
 from .risk import create_risk_manager, RiskManager
 from .scanner import create_market_scanner, MarketScanner
@@ -146,14 +146,21 @@ class TradingBot:
         
         logger.info("Polymarket client initialized")
         
-        # Initialize Weather client
-        logger.info("Initializing Tomorrow.io client...")
-        self._weather_client = create_tomorrow_io_client(
-            config=self.config,
-            api_key=self._secrets.tomorrow_io_api_key
+        # Initialize Weather client with rate limiting
+        logger.info("Initializing Tomorrow.io client with rate limiting...")
+        rate_limit_config = RateLimitConfig(
+            max_retries=5,
+            base_backoff_seconds=2.0,
+            max_backoff_seconds=60.0,
+            per_city_cooldown_seconds=180.0,
+            global_min_interval_seconds=1.0,
         )
-        
-        logger.info("Weather client initialized")
+        self._weather_client = create_tomorrow_client(
+            api_key=self._secrets.tomorrow_io_api_key,
+            rate_limit_config=rate_limit_config,
+        )
+
+        logger.info("Weather client initialized with rate limiting")
         
         # Initialize Calculator
         logger.info("Initializing Fair Price Calculator...")
@@ -326,18 +333,24 @@ class TradingBot:
                 city = self._extract_city_from_market(m).lower()
                 markets_by_city.setdefault(city, []).append(m)
 
-            # Step 4: Process city by city with mandatory "Penalty Box" sleep
+            # Step 4: Process city by city with rate-limit handling
             for city, city_markets in markets_by_city.items():
                 logger.info(f"☁️ Fetching weather: {city} ({len(city_markets)} markets)")
 
-                # 🎯 FIX: Extended 10-second sleep to clear the 429 ban
-                await asyncio.sleep(10)
+                # Get location coordinates for this city from the client's COORD_MAP
+                location = self._weather_client.COORD_MAP.get(city, self._weather_client.COORD_MAP["nyc"])
 
-                # Fetch weather with retry logic for rate limiting
-                weather_raw = await self._fetch_weather_with_retry(city)
+                # Fetch weather using rate-limit aware client
+                weather_raw = await self._weather_client.get_city_weather(
+                    city_slug=city,
+                    location=location,
+                    fields=["temperature", "temperatureApparent", "temperatureMin", "temperatureMax",
+                            "precipitationProbability", "precipitation", "weatherCode"],
+                    timesteps="1h",
+                )
 
                 if not weather_raw:
-                    logger.warning(f"❌ Skipping {city} - API rate-limited after retries.")
+                    logger.warning(f"❌ Skipping {city} - weather data unavailable (rate-limited or failed).")
                     continue
 
                 # Process weather response
@@ -375,43 +388,6 @@ class TradingBot:
                 error_message=str(e)
             )
     
-    async def _fetch_weather_with_retry(self, city: str, max_retries: int = 3) -> Optional[Dict]:
-        """
-        Fetch weather data with retry logic for rate limiting (429 errors).
-
-        Uses exponential backoff to handle Tomorrow.io rate limits.
-
-        Args:
-            city: City name to fetch weather for
-            max_retries: Maximum number of retry attempts
-
-        Returns:
-            Weather data dictionary or None if all retries exhausted
-        """
-        for attempt in range(max_retries):
-            try:
-                weather_raw = await self._weather_client.get_forecast_by_city(city)
-
-                if weather_raw:
-                    if attempt > 0:
-                        logger.info(f"✅ Weather fetched for {city} after {attempt + 1} attempts")
-                    return weather_raw
-
-                # If we got None (rate limited), wait and retry
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 10  # Exponential backoff: 10, 20, 30 seconds
-                    logger.warning(f"⚠️ Rate limited for {city}, retrying in {wait_time}s (attempt {attempt + 2}/{max_retries})...")
-                    await asyncio.sleep(wait_time)
-
-            except Exception as e:
-                logger.error(f"Weather fetch error for {city}: {e}")
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 10
-                    await asyncio.sleep(wait_time)
-
-        logger.error(f"❌ All {max_retries} retries exhausted for {city}")
-        return None
-
     async def _analyze_single_market(
         self,
         market,
