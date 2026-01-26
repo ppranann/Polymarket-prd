@@ -21,7 +21,7 @@ import logging
 import signal
 import sys
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 from .config import load_config, BotConfig
 from .secrets_manager import load_bot_secrets, SecretsManager
