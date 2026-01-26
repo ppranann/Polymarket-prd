@@ -103,7 +103,8 @@ class PolymarketClient:
         weather_markets = []
         fetched_count = 0
         
-        print("--- SLUG-BASED DISCOVERY: Fetching weather markets ---")
+        # Use logger instead of print to save storage
+        self._logger.info("Fetching weather markets via slug-based discovery...")
         
         for slug in slugs_to_fetch:
             try:
@@ -116,7 +117,6 @@ class PolymarketClient:
                     fetched_count += 1
                     
                     city = slug.split('-in-')[1].split('-on-')[0] if '-in-' in slug else 'unknown'
-                    print(f"  📍 Fetched {city}: {len(event.get('markets', []))} markets")
                     
                     # Iterate through NESTED markets array
                     for market in event.get('markets', []):
@@ -125,10 +125,6 @@ class PolymarketClient:
                             continue
                         if market.get('closed', False):
                             continue
-                        
-                        # Extract temperature bucket from groupItemTitle
-                        group_item_title = market.get('groupItemTitle', '')
-                        print(f"    🎯 Bucket: {group_item_title}")
                         
                         try:
                             # Convert gamma market to our Market format
@@ -142,8 +138,7 @@ class PolymarketClient:
                 self._logger.debug(f"Slug {slug} not found or error: {e}")
                 continue
         
-        print(f"--- DISCOVERY COMPLETE: Fetched {fetched_count} events, Found {len(weather_markets)} temperature buckets ---")
-        self._logger.info(f"Slug-based Discovery: Found {len(weather_markets)} temperature buckets")
+        self._logger.info(f"Discovery complete: {len(weather_markets)} temperature buckets found")
         return weather_markets
 
     def _convert_gamma_market(self, market: Dict, event: Dict) -> Market:

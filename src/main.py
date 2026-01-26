@@ -295,6 +295,10 @@ class TradingBot:
         # Track failed cities for batch logging
         failed_cities = []
         
+        # Weather cache for this scan (temperature doesn't change every second!)
+        # Reduces API calls from 54 per scan to just 3 (one per city)
+        weather_cache: Dict[str, Any] = {}
+        
         try:
             # Step 1: Scan for qualifying markets
             result = await self._scanner.scan()
@@ -323,16 +327,37 @@ class TradingBot:
             # Step 2: Get current prices using get_price (not get_book)
             prices = await self._scanner.get_market_prices(result.qualifying_markets)
             
-            # Step 3: Analyze each market
+            # Step 3: Analyze each market with weather caching
             for market in result.qualifying_markets:
                 try:
-                    weather_failed = await self._analyze_and_trade(
-                        market, 
-                        prices.get(market.id, market.yes_price)
+                    # Extract city name for weather caching
+                    city_name = self._extract_city_from_market(market)
+                    
+                    # 🎯 CACHE FIX: Only fetch weather if we haven't seen this city in THIS scan
+                    if city_name not in weather_cache:
+                        logger.info(f"☁️ Fetching fresh weather for {city_name}...")
+                        weather_raw = await self._weather_client.get_forecast_by_city(city_name)
+                        if weather_raw:
+                            weather_cache[city_name] = await self._process_weather_response(weather_raw)
+                        else:
+                            weather_cache[city_name] = None
+                        # Small delay to be polite to the API
+                        await asyncio.sleep(1)
+                    
+                    # Use cached weather data
+                    weather_data = weather_cache.get(city_name)
+                    
+                    # Process the market with cached weather
+                    weather_failed = await self._analyze_with_cached_weather(
+                        market,
+                        prices.get(market.id, market.yes_price),
+                        weather_data
                     )
+                    
                     # Track failed cities for batch logging
                     if weather_failed:
                         failed_cities.append(weather_failed)
+                        
                 except Exception as e:
                     logger.error(f"Error analyzing {market.id}: {e}")
                     await self._logger.log_error(
@@ -354,6 +379,102 @@ class TradingBot:
                 error_type="SCAN_TRADE_ERROR",
                 error_message=str(e)
             )
+    
+    async def _analyze_with_cached_weather(
+        self,
+        market,
+        current_price: float,
+        weather_data
+    ) -> Optional[str]:
+        """
+        Analyze a single market using pre-fetched weather data.
+        
+        Args:
+            market: Market to analyze
+            current_price: Current market price
+            weather_data: Pre-fetched WeatherData object or None
+            
+        Returns:
+            City name if weather fetch failed, None otherwise
+        """
+        logger.info(f"Analyzing {market.id[:8]}... (Price: ${current_price:.4f})")
+        
+        # Step 1: Risk check
+        can_trade, reason = self._risk_manager.validate_market_filter(
+            market_price=current_price,
+            market_id=market.id
+        )
+        
+        if not can_trade:
+            logger.debug(f"Skipping {market.id[:8]}...: {reason}")
+            return None
+        
+        # Step 2: Get city name
+        city_name = self._extract_city_from_market(market)
+        
+        # Step 3: Check if we have weather data
+        if not weather_data:
+            logger.debug(f"Weather unavailable for {city_name}, skipping...")
+            return city_name  # Return city name for batch logging
+        
+        calculation = self._calculator.calculate_fair_price_from_weather(
+            weather_data=weather_data,
+            market_condition=market.question,
+            market_price=current_price
+        )
+        
+        # Step 4: Analyze alpha
+        signal = self._alpha_detector.analyze_market(
+            market_id=market.id,
+            fair_price=calculation.fair_price,
+            market_price=current_price,
+            z_score=calculation.z_score,
+            confidence=calculation.confidence
+        )
+        
+        # Step 5: Execute trade based on signal
+        if signal.action in ["BUY", "SELL"]:
+            logger.info(
+                f"Alpha signal: {signal.action} | "
+                f"Alpha: {float(signal.alpha):.1%} | "
+                f"Multiplier: {signal.size_multiplier:.1f}x"
+            )
+            
+            result = await self._executor.execute_trade(
+                market=market,
+                current_price=current_price,
+                fair_price=calculation.fair_price,
+                alpha=signal.alpha,
+                action=signal.action
+            )
+            
+            self._trade_count += 1
+            
+            # Log trade
+            await self._logger.log_trade(
+                market_id=market.id,
+                action=result.action,
+                fair_price=calculation.fair_price,
+                market_price=current_price,
+                trade_size=result.order.size if result.order else 0,
+                alpha=signal.alpha,
+                reward_earned=result.reward_earned
+            )
+            
+            if result.success:
+                logger.info(f"Trade executed: {result.action} on {market.id[:8]}...")
+            else:
+                logger.warning(f"Trade failed: {result.reason}")
+        
+        elif signal.action == "HOLD":
+            logger.debug(
+                f"HOLD: Alpha={signal.alpha:.1%}, "
+                f"Fair=${calculation.fair_price:.4f}, "
+                f"Market=${current_price:.4f}"
+            )
+        
+        # Return None on successful analysis (no weather failure)
+        return None
     
     async def _analyze_and_trade(
         self,
