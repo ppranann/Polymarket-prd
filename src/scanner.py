@@ -170,14 +170,8 @@ class MarketScanner:
                     require_rewards=require_liquidity_rewards
                 ):
                     qualifying_markets.append(market)
-                    
-                    # LAZY WEATHER FETCHING: Only fetch if needed
-                    if fetch_weather and current_price < self._snipe_price_threshold:
-                        needs_fetch = self._needs_weather_fetch(market.id)
-                        if needs_fetch:
-                            logger.debug(f"Weather fetch needed for {market.id[:8]}...")
             
-            # Summary log instead of per-bucket logging
+            # Summary log - only show this
             logger.info(f"Scan #{self._scan_count} complete: Found {len(qualifying_markets)} active buckets.")
             
         except Exception as e:

@@ -38,14 +38,18 @@ from .logger import create_audit_logger, AuditLogger
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(message)s"
 )
 
-# Muzzle the noisy HTTP libraries
+# Muzzle the absolute bullshit from external libraries
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("aiohttp").setLevel(logging.WARNING)
 logging.getLogger("botocore").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+# Silence internal debugs - only show important info
+logging.getLogger("src.scanner").setLevel(logging.INFO)
+logging.getLogger("src.executor").setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -378,22 +382,23 @@ class TradingBot:
             logger.debug(f"Skipping {market.id[:8]}...: {reason}")
             return None
         
-        # Step 2: Get weather data
+        # Step 2: Extract city name and get weather data using coordinates
+        city_name = self._extract_city_from_market(market)
+        
         try:
-            weather = await self._weather_client.get_hourly_forecast(hours=24)
+            # Use get_forecast_by_city which converts city name to coordinates
+            weather_raw = await self._weather_client.get_forecast_by_city(city_name)
         except Exception as e:
-            logger.warning(f"Weather fetch failed for {market.id}: {e}")
-            weather = None
+            logger.warning(f"Weather fetch failed for {city_name}: {e}")
+            weather_raw = None
         
         # Step 3: Calculate fair price
-        if not weather:
-            logger.debug(f"Weather unavailable for {market.id[:8]}, skipping...")
-            # Extract city name for batch logging before returning
-            city_name = self._extract_city_from_market(market)
+        if not weather_raw:
+            logger.debug(f"Weather unavailable for {city_name}, skipping...")
             return city_name  # Return city name for batch logging
         
-        # Extract city from market question for tracking
-        city_name = self._extract_city_from_market(market)
+        # Convert raw API response to WeatherData
+        weather = await self._process_weather_response(weather_raw)
         
         # ... rest of the method unchanged
         
@@ -481,6 +486,59 @@ class TradingBot:
                     return city
         
         return "unknown"
+    
+    async def _process_weather_response(self, weather_data: Dict) -> Optional[Any]:
+        """
+        Process raw Tomorrow.io API response into WeatherData object.
+        
+        Args:
+            weather_data: Raw API response dictionary
+            
+        Returns:
+            WeatherData object or None if parsing fails
+        """
+        try:
+            from .clients.tomorrow_io import WeatherData
+            timelines = weather_data.get("data", {}).get("timelines", [])
+            
+            # Get hourly timeline
+            hourly_timeline = next(
+                (t for t in timelines if t.get("timestep") == "1h"),
+                {}
+            )
+            intervals = hourly_timeline.get("intervals", [])
+            
+            if not intervals:
+                logger.warning("No hourly intervals in weather response")
+                return None
+            
+            # Use first hour's values for current conditions
+            current = intervals[0]["values"]
+            
+            # Calculate mean from available intervals
+            temps = [i["values"]["temperature"] for i in intervals if "values" in i and "temperature" in i["values"]]
+            temp_mins = [i["values"]["temperatureMin"] for i in intervals if "values" in i and "temperatureMin" in i["values"]]
+            temp_maxs = [i["values"]["temperatureMax"] for i in intervals if "values" in i and "temperatureMax" in i["values"]]
+            
+            from datetime import datetime
+            
+            return WeatherData(
+                location=(0, 0),  # Not needed for calculation
+                fetched_at=datetime.now(),
+                current_temp=current.get("temperature", 65.0),
+                feels_like=current.get("temperatureApparent", 65.0),
+                temp_min=min(temp_mins) if temp_mins else 60.0,
+                temp_max=max(temp_maxs) if temp_maxs else 70.0,
+                temp_mean=sum(temps) / len(temps) if temps else 65.0,
+                precipitation_probability=current.get("precipitationProbability", 0.0),
+                precipitation_amount=current.get("precipitation"),
+                weather_code=current.get("weatherCode"),
+                weather_description=None,
+                raw_data=weather_data
+            )
+        except Exception as e:
+            logger.error(f"Error processing weather response: {e}")
+            return None
     
     async def _check_auto_exits(self):
         """Check and execute auto-exits for profitable positions"""
