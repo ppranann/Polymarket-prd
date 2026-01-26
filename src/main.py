@@ -610,39 +610,54 @@ class TradingBot:
     
     async def _process_weather_response(self, weather_data: Dict) -> Optional[Any]:
         """
-        Process raw Tomorrow.io API response into WeatherData object.
-        
+        Process raw Tomorrow.io V4 API response into WeatherData object.
+
+        The V4 API returns:
+        {
+          "timelines": {
+            "hourly": [
+              {
+                "time": "2026-01-26T15:00:00Z",
+                "values": {
+                  "temperature": 7.2,
+                  "humidity": 85
+                }
+              }
+            ]
+          }
+        }
+
         Args:
             weather_data: Raw API response dictionary
-            
+
         Returns:
             WeatherData object or None if parsing fails
         """
         try:
             from .clients.tomorrow_io import WeatherData
-            timelines = weather_data.get("data", {}).get("timelines", [])
-            
-            # Get hourly timeline
-            hourly_timeline = next(
-                (t for t in timelines if t.get("timestep") == "1h"),
-                {}
-            )
-            intervals = hourly_timeline.get("intervals", [])
-            
-            if not intervals:
-                logger.warning("No hourly intervals in weather response")
+
+            # V4 format: timelines.hourly (NOT data.timelines)
+            timelines = weather_data.get("timelines", {}).get("hourly", [])
+
+            if not timelines:
+                logger.warning("No hourly timelines in weather response")
                 return None
-            
-            # Use first hour's values for current conditions
-            current = intervals[0]["values"]
-            
+
+            # Use first interval's values for current conditions
+            first_interval = timelines[0]
+            if "values" not in first_interval:
+                logger.warning("No values in first hourly interval")
+                return None
+
+            current = first_interval["values"]
+
             # Calculate mean from available intervals
-            temps = [i["values"]["temperature"] for i in intervals if "values" in i and "temperature" in i["values"]]
-            temp_mins = [i["values"]["temperatureMin"] for i in intervals if "values" in i and "temperatureMin" in i["values"]]
-            temp_maxs = [i["values"]["temperatureMax"] for i in intervals if "values" in i and "temperatureMax" in i["values"]]
-            
+            temps = [i["values"]["temperature"] for i in timelines if "values" in i and "temperature" in i["values"]]
+            temp_mins = [i["values"]["temperatureMin"] for i in timelines if "values" in i and "temperatureMin" in i["values"]]
+            temp_maxs = [i["values"]["temperatureMax"] for i in timelines if "values" in i and "temperatureMax" in i["values"]]
+
             from datetime import datetime
-            
+
             return WeatherData(
                 location=(0, 0),  # Not needed for calculation
                 fetched_at=datetime.now(),
@@ -659,6 +674,8 @@ class TradingBot:
             )
         except Exception as e:
             logger.error(f"Error processing weather response: {e}")
+            # Add debug info
+            logger.debug(f"Weather response structure: {list(weather_data.keys())}")
             return None
     
     async def _check_auto_exits(self):

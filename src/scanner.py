@@ -279,7 +279,6 @@ class MarketScanner:
         
         # Fetch fresh weather data
         try:
-            logger.info(f"Fetching fresh weather for {market.id[:8]}...")
             weather = await weather_data_provider(market)
             
             # Update cache

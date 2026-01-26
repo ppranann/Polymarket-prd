@@ -327,15 +327,15 @@ class TomorrowIOClient:
     ) -> Optional[Dict[str, Any]]:
         """
         Fetch weather forecast for a city using Lat/Long coordinates.
-        
+
         This method is more reliable than city names as it uses exact coordinates.
-        Uses the V4 forecast endpoint with coordinate-based location.
-        
+        Uses the V4 timelines endpoint with coordinate-based location.
+
         Args:
             city_name: City name (e.g., "london", "seoul", "nyc")
             timesteps: List of timesteps to fetch (e.g., ["1h", "1d"])
             units: "metric" (Celsius) or "imperial" (Fahrenheit)
-            
+
         Returns:
             Weather forecast dictionary or None if failed
         """
@@ -343,10 +343,10 @@ class TomorrowIOClient:
         # This is 100% more reliable than city names
         city_key = city_name.lower().strip()
         location = self.COORD_MAP.get(city_key, self.COORD_MAP["nyc"])  # Default to NYC
-        
-        # Use the EXACT URL structure that worked in testing
-        url = f"{self.BASE_URL}/weather/forecast"
-        
+
+        # Use the V4 /timelines endpoint (not /weather/forecast)
+        url = f"{self.BASE_URL}/timelines"
+
         # Default fields for our use case
         fields = [
             "temperature",
@@ -357,10 +357,10 @@ class TomorrowIOClient:
             "precipitation",
             "weatherCode"
         ]
-        
+
         if timesteps is None:
-            timesteps = ["1h", "1d"]
-        
+            timesteps = ["1h"]
+
         params = {
             "location": location,  # Already in "lat,lon" format from COORD_MAP
             "apikey": self.api_key,
@@ -369,9 +369,9 @@ class TomorrowIOClient:
             "units": units,
             "timezone": "America/New_York"
         }
-        
+
         session = await self._get_session()
-        
+
         try:
             async with session.get(url, params=params) as resp:
                 if resp.status == 200:
@@ -385,7 +385,7 @@ class TomorrowIOClient:
                     error_text = await resp.text()
                     logger.error(f"Weather API error {resp.status} for {city_name}: {error_text}")
                     return None
-                    
+
         except aiohttp.ClientError as e:
             logger.error(f"Weather request failed for {city_name}: {e}")
             return None
