@@ -44,6 +44,8 @@ logging.basicConfig(
 # Muzzle the noisy HTTP libraries
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("aiohttp").setLevel(logging.WARNING)
+logging.getLogger("botocore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +288,9 @@ class TradingBot:
         
         logger.info(f"Scan #{self._scan_count} starting...")
         
+        # Track failed cities for batch logging
+        failed_cities = []
+        
         try:
             # Step 1: Scan for qualifying markets
             result = await self._scanner.scan()
@@ -317,7 +322,13 @@ class TradingBot:
             # Step 3: Analyze each market
             for market in result.qualifying_markets:
                 try:
-                    await self._analyze_and_trade(market, prices.get(market.id, market.yes_price))
+                    weather_failed = await self._analyze_and_trade(
+                        market, 
+                        prices.get(market.id, market.yes_price)
+                    )
+                    # Track failed cities for batch logging
+                    if weather_failed:
+                        failed_cities.append(weather_failed)
                 except Exception as e:
                     logger.error(f"Error analyzing {market.id}: {e}")
                     await self._logger.log_error(
@@ -325,6 +336,13 @@ class TradingBot:
                         error_message=str(e),
                         market_id=market.id
                     )
+            
+            # Step 4: Log weather failures ONCE at end of scan (stop log spam)
+            if failed_cities:
+                unique_fails = set(failed_cities)
+                logger.warning(
+                    f"Scan complete. Weather data missing for: {', '.join(unique_fails)}"
+                )
             
         except Exception as e:
             logger.error(f"Scan and trade error: {e}")
@@ -337,13 +355,16 @@ class TradingBot:
         self,
         market,
         current_price: float
-    ):
+    ) -> Optional[str]:
         """
         Analyze a single market and execute trades if appropriate.
         
         Args:
             market: Market to analyze
             current_price: Current market price
+            
+        Returns:
+            City name if weather fetch failed, None otherwise
         """
         logger.info(f"Analyzing {market.id[:8]}... (Price: ${current_price:.4f})")
         
@@ -355,7 +376,7 @@ class TradingBot:
         
         if not can_trade:
             logger.debug(f"Skipping {market.id[:8]}...: {reason}")
-            return
+            return None
         
         # Step 2: Get weather data
         try:
@@ -367,7 +388,14 @@ class TradingBot:
         # Step 3: Calculate fair price
         if not weather:
             logger.debug(f"Weather unavailable for {market.id[:8]}, skipping...")
-            return  # SKIP market instead of returning fake alpha
+            # Extract city name for batch logging before returning
+            city_name = self._extract_city_from_market(market)
+            return city_name  # Return city name for batch logging
+        
+        # Extract city from market question for tracking
+        city_name = self._extract_city_from_market(market)
+        
+        # ... rest of the method unchanged
         
         calculation = self._calculator.calculate_fair_price_from_weather(
             weather_data=weather,
@@ -424,6 +452,35 @@ class TradingBot:
                 f"Fair=${calculation.fair_price:.4f}, "
                 f"Market=${current_price:.4f}"
             )
+        
+        # Return None on successful analysis (no weather failure)
+        return None
+    
+    def _extract_city_from_market(self, market) -> str:
+        """
+        Extract city name from market question for tracking.
+        
+        Args:
+            market: Market to extract city from
+            
+        Returns:
+            City name in lowercase
+        """
+        question = market.question.lower()
+        
+        # Common city patterns in market names
+        city_patterns = {
+            "seoul": ["seoul", "incheon"],
+            "london": ["london", "heathrow"],
+            "nyc": ["new york", "nyc", "new-york"],
+        }
+        
+        for city, patterns in city_patterns.items():
+            for pattern in patterns:
+                if pattern in question:
+                    return city
+        
+        return "unknown"
     
     async def _check_auto_exits(self):
         """Check and execute auto-exits for profitable positions"""

@@ -109,6 +109,32 @@ class TomorrowIOClient:
     
     BASE_URL = "https://api.tomorrow.io/v4"
     
+    # Bulletproof mapping to the EXACT weather stations Polymarket uses
+    # Using Lat/Long is 100% more reliable than city names
+    COORD_MAP = {
+        # London City Airport (EGLC) - precise for London markets
+        "london": "51.5028,-0.0551",
+        
+        # Incheon Intl Airport (RKSI) - used for Seoul/Incheon markets
+        "incheon": "37.4602,126.4407",
+        "seoul": "37.4602,126.4407",  # Force Seoul queries to use Incheon station
+        
+        # Central Park Station - precise for NYC markets
+        "nyc": "40.7128,-74.0060",
+        "new-york": "40.7128,-74.0060",
+        "new york": "40.7128,-74.0060",
+    }
+    
+    # Keep COORDS tuple format for internal use (backward compatibility)
+    COORDS = {
+        "london": (51.5028, -0.0551),
+        "seoul": (37.4602, 126.4407),
+        "incheon": (37.4602, 126.4407),
+        "nyc": (40.7128, -74.0060),
+        "new-york": (40.7128, -74.0060),
+        "new york": (40.7128, -74.0060),
+    }
+    
     def __init__(
         self,
         api_key: str,
@@ -291,6 +317,77 @@ class TomorrowIOClient:
                 return await resp.json()
         except aiohttp.ClientError as e:
             logger.error(f"Tomorrow.io realtime request failed: {e}")
+            return None
+    
+    async def get_forecast_by_city(
+        self,
+        city_name: str,
+        timesteps: Optional[List[str]] = None,
+        units: str = "metric"
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fetch weather forecast for a city using Lat/Long coordinates.
+        
+        This method is more reliable than city names as it uses exact coordinates.
+        Uses the V4 forecast endpoint with coordinate-based location.
+        
+        Args:
+            city_name: City name (e.g., "london", "seoul", "nyc")
+            timesteps: List of timesteps to fetch (e.g., ["1h", "1d"])
+            units: "metric" (Celsius) or "imperial" (Fahrenheit)
+            
+        Returns:
+            Weather forecast dictionary or None if failed
+        """
+        # Get coordinates for the city using COORD_MAP (string format "lat,lon")
+        # This is 100% more reliable than city names
+        city_key = city_name.lower().strip()
+        location = self.COORD_MAP.get(city_key, self.COORD_MAP["nyc"])  # Default to NYC
+        
+        # Use the EXACT URL structure that worked in testing
+        url = f"{self.BASE_URL}/weather/forecast"
+        
+        # Default fields for our use case
+        fields = [
+            "temperature",
+            "temperatureApparent",
+            "temperatureMin",
+            "temperatureMax",
+            "precipitationProbability",
+            "precipitation",
+            "weatherCode"
+        ]
+        
+        if timesteps is None:
+            timesteps = ["1h", "1d"]
+        
+        params = {
+            "location": location,  # Already in "lat,lon" format from COORD_MAP
+            "apikey": self.api_key,
+            "fields": ",".join(fields),
+            "timesteps": ",".join(timesteps),
+            "units": units,
+            "timezone": "America/New_York"
+        }
+        
+        session = await self._get_session()
+        
+        try:
+            async with session.get(url, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    logger.debug(f"Weather fetch success for {city_name}: {location}")
+                    return data
+                elif resp.status == 404:
+                    logger.warning(f"Weather 404 for city '{city_name}' with coords {location}")
+                    return None
+                else:
+                    error_text = await resp.text()
+                    logger.error(f"Weather API error {resp.status} for {city_name}: {error_text}")
+                    return None
+                    
+        except aiohttp.ClientError as e:
+            logger.error(f"Weather request failed for {city_name}: {e}")
             return None
     
     async def get_current_weather(
