@@ -322,18 +322,16 @@ class TradingBot:
 
             # Step 3: Group markets by city to avoid duplicate API calls
             markets_by_city: Dict[str, List] = {}
-            for market in result.qualifying_markets:
-                city = self._extract_city_from_market(market).lower()
-                if city not in markets_by_city:
-                    markets_by_city[city] = []
-                markets_by_city[city].append(market)
+            for m in result.qualifying_markets:
+                city = self._extract_city_from_market(m).lower()
+                markets_by_city.setdefault(city, []).append(m)
 
             # Step 4: Process city by city with mandatory "Penalty Box" sleep
             for city, city_markets in markets_by_city.items():
-                logger.info(f"☁️ Fetching weather for {city} group ({len(city_markets)} markets)...")
+                logger.info(f"☁️ Fetching weather: {city} ({len(city_markets)} markets)")
 
-                # Mandatory 3-second 'Politeness Sleep' to clear any pending 429s
-                await asyncio.sleep(3)
+                # 🎯 FIX: Long 5-second sleep to clear the 429 ban
+                await asyncio.sleep(5)
 
                 # Fetch weather ONCE for this city
                 weather_raw = await self._weather_client.get_forecast_by_city(city)

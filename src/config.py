@@ -58,11 +58,11 @@ class ScannerConfig:
     # Basic Thresholds
     price_threshold: float = 0.85
     snipe_price_threshold: float = 0.85
-    
-    # Timing
-    scan_interval: int = 30
+
+    # Timing (5-minute heartbeat for Tomorrow.io free tier)
+    scan_interval: int = 300
     weather_cache_ttl: int = 900
-    min_weather_update_interval: int = 300  # <--- Added this to fix the error
+    min_weather_update_interval: int = 300
     
     # Lists (Using default_factory for safety)
     categories: list = field(default_factory=lambda: ['weather', 'temperature', 'global', 'science'])
