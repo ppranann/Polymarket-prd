@@ -330,14 +330,14 @@ class TradingBot:
             for city, city_markets in markets_by_city.items():
                 logger.info(f"☁️ Fetching weather: {city} ({len(city_markets)} markets)")
 
-                # 🎯 FIX: Long 5-second sleep to clear the 429 ban
-                await asyncio.sleep(5)
+                # 🎯 FIX: Extended 10-second sleep to clear the 429 ban
+                await asyncio.sleep(10)
 
-                # Fetch weather ONCE for this city
-                weather_raw = await self._weather_client.get_forecast_by_city(city)
+                # Fetch weather with retry logic for rate limiting
+                weather_raw = await self._fetch_weather_with_retry(city)
 
                 if not weather_raw:
-                    logger.warning(f"❌ Skipping {city} - API rate-limited or failed.")
+                    logger.warning(f"❌ Skipping {city} - API rate-limited after retries.")
                     continue
 
                 # Process weather response
@@ -375,6 +375,43 @@ class TradingBot:
                 error_message=str(e)
             )
     
+    async def _fetch_weather_with_retry(self, city: str, max_retries: int = 3) -> Optional[Dict]:
+        """
+        Fetch weather data with retry logic for rate limiting (429 errors).
+
+        Uses exponential backoff to handle Tomorrow.io rate limits.
+
+        Args:
+            city: City name to fetch weather for
+            max_retries: Maximum number of retry attempts
+
+        Returns:
+            Weather data dictionary or None if all retries exhausted
+        """
+        for attempt in range(max_retries):
+            try:
+                weather_raw = await self._weather_client.get_forecast_by_city(city)
+
+                if weather_raw:
+                    if attempt > 0:
+                        logger.info(f"✅ Weather fetched for {city} after {attempt + 1} attempts")
+                    return weather_raw
+
+                # If we got None (rate limited), wait and retry
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 10  # Exponential backoff: 10, 20, 30 seconds
+                    logger.warning(f"⚠️ Rate limited for {city}, retrying in {wait_time}s (attempt {attempt + 2}/{max_retries})...")
+                    await asyncio.sleep(wait_time)
+
+            except Exception as e:
+                logger.error(f"Weather fetch error for {city}: {e}")
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 10
+                    await asyncio.sleep(wait_time)
+
+        logger.error(f"❌ All {max_retries} retries exhausted for {city}")
+        return None
+
     async def _analyze_single_market(
         self,
         market,
