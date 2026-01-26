@@ -34,6 +34,17 @@ class Position:
     size: float
     avg_price: float
 
+# Mock order class for paper trading
+class MockOrder:
+    """Mock order object for paper trading mode."""
+    def __init__(self, order_id: str, market_id: str = "", side: str = "", price: float = 0, size: float = 0):
+        self.order_id = order_id
+        self.market_id = market_id
+        self.side = side
+        self.price = price
+        self.size = size
+        self.status = "SUCCESS"
+
 class PolymarketClient:
     def __init__(self, **kwargs):
         self._api_key = kwargs.get('api_key')
@@ -183,9 +194,18 @@ class PolymarketClient:
         return True
 
     async def place_limit_order(self, market_id: str, side: str, price: float, size: float, **kwargs):
-        """Mock hand for PAPER trading. **kwargs catches 'post_only' and stops the crash."""
+        """
+        Mock hand for PAPER trading. **kwargs catches 'post_only' and stops the crash.
+        Returns MockOrder object instead of dict for proper attribute access.
+        """
         self._logger.info(f"PAPER ORDER: {side.upper()} {size} @ ${price} on {market_id}")
-        return {"orderID": "mock-paper-id", "status": "SUCCESS"}
+        return MockOrder(
+            order_id=f"mock-paper-{market_id[:8]}",
+            market_id=market_id,
+            side=side,
+            price=price,
+            size=size
+        )
 
     async def get_order_book(self, token_id: str):
         """Mock order book to allow farming logic to calculate midpoints."""
@@ -196,16 +216,6 @@ class PolymarketClient:
         """Cancel an order. For paper trading, always returns success."""
         self._logger.info(f"PAPER CANCEL: Order {order_id}")
         return True
-
-    async def cancel_all_orders(self, *args, **kwargs):
-        """Fixes the 'object has no attribute' error during shutdown."""
-        self._logger.info("Cleanup: All pending paper orders cancelled.")
-        return True
-
-    async def place_limit_order(self, market_id: str, side: str, price: float, size: float, **kwargs):
-        """Mock hand for PAPER trading. **kwargs catches 'post_only' and stops the crash."""
-        self._logger.info(f"PAPER ORDER: {side.upper()} {size} @ ${price} on {market_id}")
-        return {"orderID": "mock-paper-id", "status": "SUCCESS"}
 
     def from_gamma_event(self, event: Dict) -> Market:
         raw_prices = event.get('outcomePrices', '["0.5", "0.5"]')

@@ -21,7 +21,7 @@ import logging
 import signal
 import sys
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
 
 from .config import load_config, BotConfig
 from .secrets_manager import load_bot_secrets, SecretsManager
@@ -38,10 +38,10 @@ from .logger import create_audit_logger, AuditLogger
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(message)s"
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Muzzle the absolute bullshit from external libraries
+# Muzzle the external yappers
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("aiohttp").setLevel(logging.WARNING)
 logging.getLogger("botocore").setLevel(logging.WARNING)
