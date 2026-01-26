@@ -299,6 +299,9 @@ class TradingBot:
 
         logger.info(f"Scan #{self._scan_count} starting...")
 
+        # Weather cache for this scan (temperature doesn't change every second!)
+        weather_cache: Dict[str, Any] = {}
+
         try:
             # Step 1: Scan for qualifying markets
             result = await self._scanner.scan()
@@ -334,31 +337,48 @@ class TradingBot:
                 markets_by_city.setdefault(city, []).append(m)
 
             # Step 4: Process city by city with rate-limit handling
+            skipped_cities = []
             for city, city_markets in markets_by_city.items():
                 logger.info(f"☁️ Fetching weather: {city} ({len(city_markets)} markets)")
 
-                # Get location coordinates for this city from the client's COORD_MAP
-                location = self._weather_client.COORD_MAP.get(city, self._weather_client.COORD_MAP["nyc"])
-
-                # Fetch weather using rate-limit aware client
-                weather_raw = await self._weather_client.get_city_weather(
-                    city_slug=city,
-                    location=location,
-                    fields=["temperature", "temperatureApparent", "temperatureMin", "temperatureMax",
-                            "precipitationProbability", "precipitation", "weatherCode"],
-                    timesteps="1h",
-                )
-
-                if not weather_raw:
-                    logger.warning(f"❌ Skipping {city} - weather data unavailable (rate-limited or failed).")
+                # Check if city is in cooldown from previous attempts
+                if self._weather_client._is_city_rate_limited(city):
+                    logger.warning(f"⏱️ Skipping {city} - still in cooldown from previous rate limit.")
+                    skipped_cities.append(city)
                     continue
 
-                # Process weather response
-                weather_data = await self._process_weather_response(weather_raw)
+                # Check scan-level cache first
+                if city in weather_cache:
+                    logger.debug(f"Using cached weather for {city}")
+                    weather_data = weather_cache[city]
+                else:
+                    # Get location coordinates for this city from the client's COORD_MAP
+                    location = self._weather_client.COORD_MAP.get(city, self._weather_client.COORD_MAP["nyc"])
 
-                if not weather_data:
-                    logger.warning(f"❌ Skipping {city} - could not parse weather data.")
-                    continue
+                    # Fetch weather using rate-limit aware client
+                    weather_raw = await self._weather_client.get_city_weather(
+                        city_slug=city,
+                        location=location,
+                        fields=["temperature", "temperatureApparent", "temperatureMin", "temperatureMax",
+                                "precipitationProbability", "precipitation", "weatherCode"],
+                        timesteps="1h",
+                    )
+
+                    if not weather_raw:
+                        logger.warning(f"❌ Skipping {city} - weather data unavailable (rate-limited or failed).")
+                        skipped_cities.append(city)
+                        continue
+
+                    # Process weather response
+                    weather_data = await self._process_weather_response(weather_raw)
+
+                    if not weather_data:
+                        logger.warning(f"❌ Skipping {city} - could not parse weather data.")
+                        skipped_cities.append(city)
+                        continue
+
+                    # Cache for this scan
+                    weather_cache[city] = weather_data
 
                 # Step 5: Analyze ALL markets for THIS city using the single fetch
                 for market in city_markets:
@@ -366,7 +386,6 @@ class TradingBot:
                         current_price = prices.get(market.id, market.yes_price)
 
                         # Skip individual analyzing log - we already logged city group
-                        # Process market with pre-fetched weather
                         await self._analyze_single_market(
                             market=market,
                             current_price=current_price,
@@ -380,6 +399,10 @@ class TradingBot:
                             error_message=str(e),
                             market_id=market.id
                         )
+
+            # Log summary
+            if skipped_cities:
+                logger.warning(f"Scan #{self._scan_count} complete. Skipped rate-limited cities: {', '.join(skipped_cities)}")
 
         except Exception as e:
             logger.error(f"Scan and trade error: {e}")

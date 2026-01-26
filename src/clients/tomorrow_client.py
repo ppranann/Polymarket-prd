@@ -212,7 +212,10 @@ class TomorrowClient:
         city_slug: str,
     ) -> Tuple[Optional[Dict[str, Any]], int]:
         """
-        Perform HTTP request with retries & exponential backoff.
+        Perform HTTP request with retries.
+
+        IMPORTANT: 429 errors are NOT retried - they trigger a hard cooldown.
+        Only 5xx errors and network issues are retried with exponential backoff.
 
         Returns (response_json_or_none, status_code_or_0)
         """
@@ -230,6 +233,14 @@ class TomorrowClient:
             # Global throttling
             await self._respect_global_rate()
 
+            # Re-check cooldown before each attempt (critical!)
+            if self._is_city_rate_limited(city_slug):
+                logger.warning(
+                    "⏱️ City %s is in cooldown - skipping all retry attempts.",
+                    city_slug,
+                )
+                return None, 429
+
             try:
                 self._last_request_ts = time.time()
 
@@ -246,29 +257,21 @@ class TomorrowClient:
                             )
                             return None, response.status
 
-                    # Rate limit (429)
+                    # Rate limit (429) - HARD FAIL, NO RETRY
                     if response.status == 429:
                         body_text = await response.text()
                         logger.error(
                             f"Weather API error 429 for {city_slug}: {body_text}",
                         )
+                        # Mark as rate-limited - this city is blocked for cooldown period
                         self._mark_city_rate_limited(city_slug)
-
-                        if attempt > max_retries:
-                            logger.warning(
-                                f"Giving up on {city_slug} after {attempt - 1} attempts due to repeated 429.",
-                            )
-                            return None, response.status
-
-                        # Backoff and retry
-                        logger.info(
-                            f"Retrying {city_slug} after rate limit. Attempt {attempt}/{max_retries}. Sleeping {backoff:.1f}s",
+                        # DO NOT RETRY - cooldown handles it
+                        logger.warning(
+                            f"🚫 Rate limit hit for {city_slug}. Skipping this city for {self.rate_limit_config.per_city_cooldown_seconds}s.",
                         )
-                        await asyncio.sleep(backoff)
-                        backoff = min(backoff * 2, max_backoff)
-                        continue
+                        return None, response.status
 
-                    # Server errors (5xx)
+                    # Server errors (5xx) - RETRY with backoff
                     if 500 <= response.status < 600:
                         if attempt > max_retries:
                             logger.error(
@@ -290,7 +293,7 @@ class TomorrowClient:
                     return None, response.status
 
             except aiohttp.ClientError as e:
-                # Network issues
+                # Network issues - RETRY with backoff
                 if attempt > max_retries:
                     logger.exception(
                         f"Network error calling Tomorrow.io for {city_slug}; giving up after {attempt - 1} attempts.",
