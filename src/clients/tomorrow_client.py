@@ -5,6 +5,7 @@ Enhanced client with:
 - Automatic retry with exponential backoff for 429 errors
 - Per-city cooldown after rate limit
 - Global rate limiting between API calls
+- Per-city weather cache with TTL (prevents redundant API calls)
 - Comprehensive logging
 
 Usage:
@@ -14,7 +15,7 @@ Usage:
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
 
 import aiohttp
@@ -53,6 +54,7 @@ class TomorrowClient:
     - Handles HTTP 429 with exponential backoff
     - Applies per-city cooldown after rate-limit
     - Throttles overall request rate with global_min_interval_seconds
+    - Caches weather data per city with TTL to avoid redundant API calls
     """
     BASE_URL = "https://api.tomorrow.io/v4"
 
@@ -76,18 +78,23 @@ class TomorrowClient:
         self,
         api_key: str,
         rate_limit_config: Optional[RateLimitConfig] = None,
+        cache_ttl_seconds: float = 21600.0,  # 6 hours default TTL
     ):
         self.api_key = api_key
         self.rate_limit_config = rate_limit_config or RateLimitConfig()
+        self.cache_ttl_seconds = cache_ttl_seconds
         self._session: Optional[aiohttp.ClientSession] = None
 
         # city_slug -> timestamp of when we last saw a 429
         self._city_rate_limited_until: Dict[str, float] = {}
 
+        # city_slug -> (cached_data, timestamp) for weather cache
+        self._weather_cache: Dict[str, Tuple[Dict[str, Any], float]] = {}
+
         # timestamp of last *any* request
         self._last_request_ts: float = 0.0
 
-        logger.info("☁️ Tomorrow.io client initialized with rate limiting")
+        logger.info("☁️ Tomorrow.io client initialized with rate limiting and %ds cache TTL", cache_ttl_seconds)
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session"""
@@ -132,6 +139,58 @@ class TomorrowClient:
             cooldown,
         )
 
+    def _is_cache_valid(self, city_slug: str) -> bool:
+        """Check if cached weather data is still valid"""
+        if city_slug not in self._weather_cache:
+            return False
+        cached_data, timestamp = self._weather_cache[city_slug]
+        now = time.time()
+        age_seconds = now - timestamp
+        if age_seconds >= self.cache_ttl_seconds:
+            logger.debug(
+                "Cache expired for %s (age: %.0fs, TTL: %.0fs)",
+                city_slug,
+                age_seconds,
+                self.cache_ttl_seconds
+            )
+            del self._weather_cache[city_slug]
+            return False
+        return True
+
+    def _get_cached_weather(self, city_slug: str) -> Optional[Dict[str, Any]]:
+        """Get cached weather data for a city"""
+        if self._is_cache_valid(city_slug):
+            cached_data, timestamp = self._weather_cache[city_slug]
+            age_minutes = (time.time() - timestamp) / 60
+            logger.info(
+                "📦 Using cached weather for %s (age: %.1f min, TTL: %.0f min)",
+                city_slug,
+                age_minutes,
+                self.cache_ttl_seconds / 60
+            )
+            return cached_data
+        return None
+
+    def _cache_weather(self, city_slug: str, data: Dict[str, Any]):
+        """Cache weather data for a city"""
+        self._weather_cache[city_slug] = (data, time.time())
+        logger.debug(
+            "💾 Cached weather for %s (TTL: %.0f min)",
+            city_slug,
+            self.cache_ttl_seconds / 60
+        )
+
+    def clear_cache(self, city_slug: Optional[str] = None):
+        """Clear weather cache"""
+        if city_slug:
+            if city_slug in self._weather_cache:
+                del self._weather_cache[city_slug]
+                logger.info(f"Cleared cache for {city_slug}")
+        else:
+            count = len(self._weather_cache)
+            self._weather_cache.clear()
+            logger.info(f"Cleared weather cache for {count} cities")
+
     async def _respect_global_rate(self):
         """Ensure we don't exceed global_min_interval_seconds between API calls"""
         now = time.time()
@@ -154,7 +213,7 @@ class TomorrowClient:
         units: str = "metric",
     ) -> Optional[Dict[str, Any]]:
         """
-        Fetch weather data for a city with rate-limit handling.
+        Fetch weather data for a city with rate-limit handling and caching.
 
         Args:
             city_slug: internal name used in logs ("london", "seoul", etc)
@@ -166,6 +225,11 @@ class TomorrowClient:
         Returns:
             Weather data dictionary or None if rate-limited or failed
         """
+        # Check cache first - skip API call if we have fresh data
+        cached = self._get_cached_weather(city_slug)
+        if cached is not None:
+            return cached
+
         # Check city cooldown
         if self._is_city_rate_limited(city_slug):
             logger.warning(
@@ -196,6 +260,8 @@ class TomorrowClient:
             return None
 
         if status_code == 200:
+            # Cache successful responses
+            self._cache_weather(city_slug, response_json)
             return response_json
 
         logger.error(
@@ -312,6 +378,7 @@ class TomorrowClient:
 def create_tomorrow_client(
     api_key: str,
     rate_limit_config: Optional[RateLimitConfig] = None,
+    cache_ttl_seconds: float = 21600.0,  # 6 hours default
 ) -> TomorrowClient:
     """
     Factory function to create a TomorrowClient.
@@ -319,6 +386,7 @@ def create_tomorrow_client(
     Args:
         api_key: Tomorrow.io API key
         rate_limit_config: Optional rate limiting configuration
+        cache_ttl_seconds: Cache TTL in seconds (default: 6 hours)
 
     Returns:
         Configured TomorrowClient instance
@@ -326,5 +394,6 @@ def create_tomorrow_client(
     return TomorrowClient(
         api_key=api_key,
         rate_limit_config=rate_limit_config,
+        cache_ttl_seconds=cache_ttl_seconds,
     )
 

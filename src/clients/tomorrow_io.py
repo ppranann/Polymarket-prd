@@ -195,6 +195,7 @@ class TomorrowIOClient:
         loc = location or self.default_location
         
         # Default fields for our use case
+        # NOTE: "precipitation" is NOT valid for /timelines endpoint - causes 400 errors
         if fields is None:
             fields = [
                 "temperature",
@@ -202,7 +203,6 @@ class TomorrowIOClient:
                 "temperatureMin",
                 "temperatureMax",
                 "precipitationProbability",
-                "precipitation",
                 "weatherCode"
             ]
         
@@ -348,13 +348,13 @@ class TomorrowIOClient:
         url = f"{self.BASE_URL}/timelines"
 
         # Default fields for our use case
+        # NOTE: "precipitation" is NOT valid for /timelines endpoint - causes 400 errors
         fields = [
             "temperature",
             "temperatureApparent",
             "temperatureMin",
             "temperatureMax",
             "precipitationProbability",
-            "precipitation",
             "weatherCode"
         ]
 

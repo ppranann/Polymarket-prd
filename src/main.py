@@ -146,8 +146,8 @@ class TradingBot:
         
         logger.info("Polymarket client initialized")
         
-        # Initialize Weather client with rate limiting
-        logger.info("Initializing Tomorrow.io client with rate limiting...")
+        # Initialize Weather client with rate limiting and caching
+        logger.info("Initializing Tomorrow.io client with rate limiting and caching...")
         rate_limit_config = RateLimitConfig(
             max_retries=5,
             base_backoff_seconds=2.0,
@@ -158,6 +158,7 @@ class TradingBot:
         self._weather_client = create_tomorrow_client(
             api_key=self._secrets.tomorrow_io_api_key,
             rate_limit_config=rate_limit_config,
+            cache_ttl_seconds=21600.0,  # 6 hours - temperature doesn't change rapidly
         )
 
         logger.info("Weather client initialized with rate limiting")
@@ -356,11 +357,19 @@ class TradingBot:
                     location = self._weather_client.COORD_MAP.get(city, self._weather_client.COORD_MAP["nyc"])
 
                     # Fetch weather using rate-limit aware client
+                    # NOTE: "precipitation" field is NOT valid for /timelines endpoint
+                    # Using only safe fields to avoid 400 errors
                     weather_raw = await self._weather_client.get_city_weather(
                         city_slug=city,
                         location=location,
-                        fields=["temperature", "temperatureApparent", "temperatureMin", "temperatureMax",
-                                "precipitationProbability", "precipitation", "weatherCode"],
+                        fields=[
+                            "temperature",
+                            "temperatureApparent",
+                            "temperatureMin",
+                            "temperatureMax",
+                            "precipitationProbability",
+                            "weatherCode"
+                        ],  # REMOVED: "precipitation" (invalid field)
                         timesteps="1h",
                     )
 
