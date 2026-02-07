@@ -280,8 +280,7 @@ class OrderExecutor:
                 post_only=True
             )
             orders_placed.append(buy_order)
-            logger.info(f"Farming BUY: {size} @ ${buy_price:.4f} (mid: ${midpoint:.4f})")
-            
+
             # Place sell order (above midpoint)
             sell_order = await self.client.place_limit_order(
                 market_id=market_id,
@@ -291,7 +290,12 @@ class OrderExecutor:
                 post_only=True
             )
             orders_placed.append(sell_order)
-            logger.info(f"Farming SELL: {size} @ ${sell_price:.4f} (mid: ${midpoint:.4f})")
+
+            # Log both orders on one line
+            logger.info(
+                f"Farming: BUY ${buy_price:.4f} / SELL ${sell_price:.4f} "
+                f"(mid: ${midpoint:.4f}, size: {size})"
+            )
             
             # Track the farming position (use dict access for mock responses)
             farming_pos = FarmingPosition(

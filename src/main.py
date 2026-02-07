@@ -529,8 +529,8 @@ class TradingBot:
         Returns:
             City name if weather fetch failed, None otherwise
         """
-        logger.info(f"Analyzing {market.id[:8]}... (Price: ${current_price:.4f})")
-        
+        logger.debug(f"Analyzing {market.id[:8]}... (Price: ${current_price:.4f})")
+
         # Step 1: Risk check
         can_trade, reason = self._risk_manager.validate_market_filter(
             market_price=current_price,

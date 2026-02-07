@@ -218,7 +218,7 @@ class PolymarketClient:
         Mock hand for PAPER trading. **kwargs catches 'post_only' and stops the crash.
         Returns MockOrder object instead of dict for proper attribute access.
         """
-        self._logger.info(f"PAPER ORDER: {side.upper()} {size} @ ${price} on {market_id}")
+        self._logger.debug(f"PAPER ORDER: {side.upper()} {size} @ ${price} on {market_id}")
         return MockOrder(
             order_id=f"mock-paper-{market_id[:8]}",
             market_id=market_id,
@@ -234,7 +234,7 @@ class PolymarketClient:
 
     async def cancel_order(self, order_id: str) -> bool:
         """Cancel an order. For paper trading, always returns success."""
-        self._logger.info(f"PAPER CANCEL: Order {order_id}")
+        self._logger.debug(f"PAPER CANCEL: Order {order_id}")
         return True
 
     def from_gamma_event(self, event: Dict) -> Market:
