@@ -674,25 +674,33 @@ class TradingBot:
         try:
             from .clients.tomorrow_io import WeatherData
 
-            # V4 format: timelines.hourly (NOT data.timelines)
-            timelines = weather_data.get("timelines", {}).get("hourly", [])
+            # Tomorrow.io V4 API format: data.timelines[0].intervals
+            data = weather_data.get("data", {})
+            timelines = data.get("timelines", [])
 
-            if not timelines:
-                logger.warning("No hourly timelines in weather response")
+            if not timelines or len(timelines) == 0:
+                logger.warning("No timelines in weather response")
+                return None
+
+            # Get intervals from first timeline
+            intervals = timelines[0].get("intervals", [])
+
+            if not intervals:
+                logger.warning("No intervals in weather timeline")
                 return None
 
             # Use first interval's values for current conditions
-            first_interval = timelines[0]
+            first_interval = intervals[0]
             if "values" not in first_interval:
-                logger.warning("No values in first hourly interval")
+                logger.warning("No values in first interval")
                 return None
 
             current = first_interval["values"]
 
             # Calculate mean from available intervals
-            temps = [i["values"]["temperature"] for i in timelines if "values" in i and "temperature" in i["values"]]
-            temp_mins = [i["values"]["temperatureMin"] for i in timelines if "values" in i and "temperatureMin" in i["values"]]
-            temp_maxs = [i["values"]["temperatureMax"] for i in timelines if "values" in i and "temperatureMax" in i["values"]]
+            temps = [i["values"]["temperature"] for i in intervals if "values" in i and "temperature" in i["values"]]
+            temp_mins = [i["values"].get("temperatureMin", i["values"]["temperature"]) for i in intervals if "values" in i and "temperature" in i["values"]]
+            temp_maxs = [i["values"].get("temperatureMax", i["values"]["temperature"]) for i in intervals if "values" in i and "temperature" in i["values"]]
 
             from datetime import datetime
 
@@ -712,8 +720,9 @@ class TradingBot:
             )
         except Exception as e:
             logger.error(f"Error processing weather response: {e}")
-            # Add debug info
-            logger.debug(f"Weather response structure: {list(weather_data.keys())}")
+            logger.debug(f"Weather response keys: {list(weather_data.keys())}")
+            if "data" in weather_data:
+                logger.debug(f"Data keys: {list(weather_data.get('data', {}).keys())}")
             return None
     
     async def _check_auto_exits(self):
