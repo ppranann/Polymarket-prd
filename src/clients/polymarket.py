@@ -96,7 +96,7 @@ class PolymarketClient:
         slugs_to_fetch = []
         for i in range(3):  # Today, tomorrow, day after
             date = datetime.utcnow() + timedelta(days=i)
-            date_str = date.strftime('%B-%-d').lower()  # "january-25"
+            date_str = date.strftime('%B-%-d-%Y').lower()  # "february-7-2026"
             for city in target_cities:
                 slugs_to_fetch.append(f"highest-temperature-in-{city}-on-{date_str}")
         
