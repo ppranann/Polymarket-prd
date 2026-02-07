@@ -45,6 +45,31 @@ class MockOrder:
         self.size = size
         self.status = "SUCCESS"
 
+    def __getitem__(self, key):
+        """Support dict-style access for compatibility with executor."""
+        # Map camelCase API keys to snake_case attributes
+        key_mapping = {
+            "orderID": "order_id",
+            "order_id": "order_id",
+            "marketID": "market_id",
+            "market_id": "market_id",
+            "side": "side",
+            "price": "price",
+            "size": "size",
+            "status": "status"
+        }
+        attr_name = key_mapping.get(key, key)
+        if hasattr(self, attr_name):
+            return getattr(self, attr_name)
+        raise KeyError(f"MockOrder has no key '{key}'")
+
+    def get(self, key, default=None):
+        """Support dict.get() method for compatibility."""
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
 class PolymarketClient:
     def __init__(self, **kwargs):
         self._api_key = kwargs.get('api_key')
