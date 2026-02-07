@@ -109,7 +109,14 @@ class MarketScanner:
         
         # Configurable intervals
         self._price_poll_interval = 30  # Poll prices every 30 seconds (free)
-        self._weather_cache_ttl = 15 * 60  # 15 minutes cache for weather
+
+        # FIX #2: Force fresh weather data every 5 minutes
+        # 15 minutes was way too stale - saw 42min old data in production!
+        self._weather_cache_ttl = 5 * 60  # 5 minutes cache for weather
+
+        # CRITICAL: Maximum weather data age before halting trading
+        self._max_weather_age = 10 * 60  # 10 minutes - HARD LIMIT
+
         self._snipe_price_threshold = config.scanner.snipe_price_threshold
         
     async def scan(
@@ -259,22 +266,32 @@ class MarketScanner:
     ) -> Dict[str, Any]:
         """
         Get weather data for a market with caching.
-        
+
         This implements the "Lazy API" pattern:
         - Only calls Tomorrow.io when necessary
-        - Caches results for 15 minutes
-        
+        - Caches results for 5 minutes
+        - HALTS trading if data > 10 minutes old
+
         Args:
             market: Market to get weather for
             weather_data_provider: Async function to fetch weather
-            
+
         Returns:
             Weather data dictionary
         """
+        # FIX #2: Check if cached data is dangerously stale
+        cached = self._market_cache.get(market.id)
+        if cached and cached.last_weather_scan:
+            age_seconds = (datetime.now() - cached.last_weather_scan).total_seconds()
+            if age_seconds > self._max_weather_age:
+                raise ValueError(
+                    f"STALE WEATHER DATA: {market.id[:8]} has {age_seconds/60:.1f}min old data "
+                    f"(max: {self._max_weather_age/60:.0f}min). HALTING TRADING."
+                )
+
         # Check if we need to fetch
         if not self._needs_weather_fetch(market.id):
             logger.debug(f"Using cached weather for {market.id[:8]}...")
-            cached = self._market_cache.get(market.id)
             return cached.weather_data if cached else None
         
         # Fetch fresh weather data
@@ -386,15 +403,26 @@ class MarketScanner:
     ) -> bool:
         """
         Check if a market qualifies for trading.
-        
+
         Args:
             market: Market to check
             threshold: Price threshold
             require_rewards: Require Liquidity Rewards
-            
+
         Returns:
             True if market qualifies
         """
+        # Filter ancient markets (Priority 3: Data Reliability)
+        if hasattr(market, 'end_date') and market.end_date:
+            from datetime import datetime
+            if market.end_date < datetime.now():
+                logger.debug(f"Skipping {market.id[:8]} - market ended")
+                return False
+
+        if hasattr(market, 'accepting_orders') and not market.accepting_orders:
+            logger.debug(f"Skipping {market.id[:8]} - not accepting orders")
+            return False
+
         # Must be active
         if not market.active:
             logger.debug(f"Skipping {market.id[:8]} - not active")

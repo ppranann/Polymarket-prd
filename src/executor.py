@@ -60,30 +60,32 @@ class FarmingPosition:
     last_rebalance: datetime
     order_value: float
     
-    def needs_rebalance(self, new_midpoint: float, threshold: float = 0.005) -> bool:
+    def needs_rebalance(self, new_midpoint: float, threshold: float = 0.01) -> bool:
         """
         Check if position needs rebalancing.
-        
-        Rebalance if midpoint moved by more than threshold (0.5%).
-        Also rebalance if older than 60 seconds.
-        
+
+        Rebalance if midpoint moved by more than threshold (1.0% - increased from 0.5%).
+        Also rebalance if older than 120 seconds (increased from 60s).
+
+        Priority 1: Cost Control - reduced rebalance frequency
+
         Args:
             new_midpoint: New market midpoint
-            threshold: Minimum movement to trigger rebalance
-            
+            threshold: Minimum movement to trigger rebalance (default: 1.0%)
+
         Returns:
             True if rebalance is needed
         """
-        # Check time-based rebalance (60 seconds)
+        # Check time-based rebalance (120 seconds - increased from 60s)
         age = datetime.now() - self.last_rebalance
-        if age.total_seconds() > 60:
+        if age.total_seconds() > 120:
             return True
-        
-        # Check midpoint movement
+
+        # Check midpoint movement (1.0% - increased from 0.5%)
         midpoint_change = abs(new_midpoint - self.midpoint)
         if midpoint_change > threshold:
             return True
-        
+
         return False
 
 
@@ -126,13 +128,161 @@ class OrderExecutor:
         
         # Track active farming positions
         self._farming_positions: Dict[str, FarmingPosition] = {}
-        
+
         # Track recent orders
         self._recent_orders: Dict[str, datetime] = {}
-        
+
         # Midpoint tracking for farming
         self._midpoint_cache: Dict[str, float] = {}
-    
+
+        # Price validation constants (Priority 0: Critical Safety)
+        self.MIN_PRICE = 0.001
+        self.MAX_PRICE = 0.999
+
+        # Action cooldown tracking (Priority 1: Cost Control)
+        self._market_last_action: Dict[str, datetime] = {}
+        self._cooldown_seconds = self.execution_config.cooldown_seconds
+
+    async def _get_existing_orders(self, market_id: str) -> Dict[str, Any]:
+        """
+        Get existing orders for a market (Priority 1: Cost Control).
+
+        Args:
+            market_id: Market to get orders for
+
+        Returns:
+            Dictionary of side -> order (e.g., {"BUY": order, "SELL": order})
+        """
+        try:
+            all_orders = await self.client.get_open_orders()
+            market_orders = {}
+
+            for order in all_orders:
+                # Handle both dict and Order object responses
+                if isinstance(order, dict):
+                    order_market_id = order.get('market', order.get('market_id'))
+                    order_side = order.get('side')
+                    order_price = float(order.get('price', 0))
+                else:
+                    order_market_id = getattr(order, 'market_id', getattr(order, 'market', None))
+                    order_side = order.side
+                    order_price = float(order.price)
+
+                if order_market_id == market_id:
+                    market_orders[order_side] = {"price": order_price, "order": order}
+
+            return market_orders
+        except Exception as e:
+            logger.debug(f"Error getting existing orders for {market_id[:8]}: {e}")
+            return {}
+
+    def _orders_match(
+        self,
+        desired_buy: float,
+        desired_sell: float,
+        existing: Dict[str, Any]
+    ) -> bool:
+        """
+        Check if desired orders match existing orders (Priority 1: Cost Control).
+
+        Args:
+            desired_buy: Desired buy price
+            desired_sell: Desired sell price
+            existing: Existing orders dict from _get_existing_orders()
+
+        Returns:
+            True if orders are essentially identical (within threshold)
+        """
+        threshold = self.execution_config.no_op_threshold
+
+        # Check if we have both buy and sell orders
+        if "BUY" not in existing or "SELL" not in existing:
+            return False
+
+        existing_buy_price = existing["BUY"]["price"]
+        existing_sell_price = existing["SELL"]["price"]
+
+        # Compare prices within threshold (0.1% by default)
+        buy_match = abs(desired_buy - existing_buy_price) < threshold
+        sell_match = abs(desired_sell - existing_sell_price) < threshold
+
+        return buy_match and sell_match
+
+    def _is_in_cooldown(self, market_id: str) -> tuple[bool, Optional[str]]:
+        """
+        Check if a market is in cooldown period (Priority 1: Cost Control).
+
+        Args:
+            market_id: Market to check
+
+        Returns:
+            Tuple of (is_in_cooldown: bool, reason: Optional[str])
+        """
+        if market_id not in self._market_last_action:
+            return False, None
+
+        last_action = self._market_last_action[market_id]
+        elapsed = (datetime.now() - last_action).total_seconds()
+
+        if elapsed < self._cooldown_seconds:
+            remaining = int(self._cooldown_seconds - elapsed)
+            reason = f"Market in cooldown: {remaining}s remaining (last action: {elapsed:.0f}s ago)"
+            return True, reason
+
+        return False, None
+
+    def _validate_price_bands(
+        self,
+        buy_price: float,
+        sell_price: float,
+        midpoint: float
+    ) -> bool:
+        """
+        Validate price bands to prevent invalid orders (Priority 0: Critical Safety).
+
+        Checks:
+        - buy_price must be < sell_price
+        - buy_price must be >= MIN_PRICE (0.001)
+        - sell_price must be <= MAX_PRICE (0.999)
+        - Spread should not be excessively wide (warn if > 50%)
+
+        Args:
+            buy_price: Desired buy order price
+            sell_price: Desired sell order price
+            midpoint: Market midpoint
+
+        Returns:
+            True if price bands are valid, False otherwise
+        """
+        # Critical check: buy must be less than sell
+        if buy_price >= sell_price:
+            logger.error(
+                f"CRITICAL: Invalid price bands - buy_price ({buy_price:.4f}) >= "
+                f"sell_price ({sell_price:.4f})"
+            )
+            return False
+
+        # Check minimum buy price
+        if buy_price < self.MIN_PRICE:
+            logger.error(f"CRITICAL: buy_price ({buy_price:.4f}) < MIN_PRICE ({self.MIN_PRICE})")
+            return False
+
+        # Check maximum sell price
+        if sell_price > self.MAX_PRICE:
+            logger.error(f"CRITICAL: sell_price ({sell_price:.4f}) > MAX_PRICE ({self.MAX_PRICE})")
+            return False
+
+        # Warn if spread is very wide (> 50%)
+        spread = sell_price - buy_price
+        if spread > 0.50:
+            logger.warning(
+                f"Wide spread detected: {spread:.4f} (buy={buy_price:.4f}, "
+                f"sell={sell_price:.4f}, mid={midpoint:.4f})"
+            )
+            # Still allow wide spreads, just warn
+
+        return True
+
     async def execute_trade(
         self,
         market: Market,
@@ -143,14 +293,14 @@ class OrderExecutor:
     ) -> ExecutionResult:
         """
         Execute a trade based on market analysis.
-        
+
         Args:
             market: Market to trade
             current_price: Current market price
             fair_price: Calculated fair price
             alpha: Calculated alpha (underpricing)
             action: "BUY", "SELL", or "HOLD"
-            
+
         Returns:
             ExecutionResult with order details
         """
@@ -161,7 +311,30 @@ class OrderExecutor:
                 action="HOLD",
                 reason="No trading signal (alpha below threshold)"
             )
-        
+
+        # Check cooldown (Priority 1: Cost Control)
+        in_cooldown, cooldown_reason = self._is_in_cooldown(market.id)
+        if in_cooldown:
+            logger.debug(f"Skipping {market.id[:8]}: {cooldown_reason}")
+            return ExecutionResult(
+                success=False,
+                order=None,
+                action="SKIP",
+                reason=cooldown_reason
+            )
+
+        # Restrict naked sells (Priority 2: Strategy & Position Logic)
+        if action == "SELL":
+            position = self.risk.get_position(market.id)
+            if not position or position.size <= 0:
+                logger.warning(f"Cannot sell {market.id[:8]}: no position held")
+                return ExecutionResult(
+                    success=False,
+                    order=None,
+                    action="SKIP",
+                    reason="Cannot sell: no position held"
+                )
+
         # Calculate position size
         base_size = self.config.risk.max_trade_size
         size = self.risk.calculate_position_size(
@@ -236,7 +409,18 @@ class OrderExecutor:
             f"Entering Adjusted Midpoint Farming for {market_id[:8]}... "
             f"(Price: ${current_price:.4f})"
         )
-        
+
+        # Check cooldown (Priority 1: Cost Control)
+        in_cooldown, cooldown_reason = self._is_in_cooldown(market_id)
+        if in_cooldown:
+            logger.debug(f"Skipping farming for {market_id[:8]}: {cooldown_reason}")
+            return ExecutionResult(
+                success=False,
+                order=None,
+                action="SKIP",
+                reason=cooldown_reason
+            )
+
         # Get current midpoint (use price as proxy if no order book)
         midpoint = await self._get_adjusted_midpoint(market, current_price)
         
@@ -258,16 +442,43 @@ class OrderExecutor:
             await self._cancel_farming_position(market_id)
         
         # Calculate new order prices around midpoint
-        # Blue Zone is typically ±1-2% around midpoint
+        # FIX #1: Dynamic exits at current midpoint + small spread
+        # Take tiny wins instead of waiting for impossible prices
         spread_buffer = 0.01  # 1% buffer for Blue Zone
-        
+
         buy_price = max(0.01, midpoint - spread_buffer)
-        sell_price = min(0.99, midpoint + spread_buffer)
-        
-        # Ensure prices are reasonable
+        sell_price = midpoint + 0.01  # FIXED: Always midpoint + $0.01 for quick exits
+
+        # Ensure buy price doesn't exceed current price
         buy_price = min(buy_price, current_price - 0.005)
-        sell_price = max(sell_price, current_price + 0.005)
-        
+
+        # Validate price bands (Priority 0: Critical Safety)
+        if not self._validate_price_bands(buy_price, sell_price, midpoint):
+            logger.error(
+                f"Invalid price bands for {market_id[:8]}: "
+                f"buy={buy_price:.4f}, sell={sell_price:.4f}, mid={midpoint:.4f}"
+            )
+            return ExecutionResult(
+                success=False,
+                order=None,
+                action="SKIP",
+                reason="Invalid price bands (buy >= sell or out of range)"
+            )
+
+        # No-op guard: Check if desired orders match existing orders (Priority 1: Cost Control)
+        existing_orders = await self._get_existing_orders(market_id)
+        if self._orders_match(buy_price, sell_price, existing_orders):
+            logger.debug(
+                f"Orders unchanged for {market_id[:8]}: "
+                f"buy={buy_price:.4f}, sell={sell_price:.4f} (skipping re-post)"
+            )
+            return ExecutionResult(
+                success=True,
+                order=None,
+                action="NO_OP",
+                reason="Existing orders match desired state"
+            )
+
         orders_placed = []
         
         try:
@@ -308,10 +519,13 @@ class OrderExecutor:
                 order_value=size * 2
             )
             self._farming_positions[market_id] = farming_pos
-            
+
+            # Record action timestamp for cooldown (Priority 1: Cost Control)
+            self._market_last_action[market_id] = datetime.now()
+
             # Estimate rewards
             estimated_reward = self._estimate_farming_reward(size, midpoint)
-            
+
             return ExecutionResult(
                 success=True,
                 order=buy_order,
@@ -521,7 +735,7 @@ class OrderExecutor:
     ) -> ExecutionResult:
         """
         Place a single order.
-        
+
         Args:
             market: Market to trade
             side: "BUY" or "SELL"
@@ -529,10 +743,24 @@ class OrderExecutor:
             size: Position size
             post_only: Use Post-Only order (maker)
             entry_alpha: Alpha signal strength when entering
-            
+
         Returns:
             ExecutionResult with order details
         """
+        # Validate price (Priority 0: Critical Safety)
+        if price < self.MIN_PRICE or price > self.MAX_PRICE:
+            logger.error(
+                f"CRITICAL: Invalid order price {price:.4f} for {side} order "
+                f"(valid range: {self.MIN_PRICE} - {self.MAX_PRICE})"
+            )
+            return ExecutionResult(
+                success=False,
+                order=None,
+                action="ERROR",
+                reason=f"Invalid price: {price:.4f} out of valid range",
+                error=f"Price {price:.4f} violates MIN_PRICE/MAX_PRICE constraints"
+            )
+
         try:
             # Place the order
             order = await self.client.place_limit_order(
@@ -550,7 +778,10 @@ class OrderExecutor:
             
             # Track order (use dict access for mock responses)
             self._recent_orders[order["orderID"]] = datetime.now()
-            
+
+            # Record action timestamp for cooldown (Priority 1: Cost Control)
+            self._market_last_action[market.id] = datetime.now()
+
             # Track position in risk manager (for BUY orders)
             if side == "BUY":
                 self.risk.open_position(
@@ -560,7 +791,7 @@ class OrderExecutor:
                     price=price,
                     entry_alpha=entry_alpha
                 )
-            
+
             return ExecutionResult(
                 success=True,
                 order=order,
@@ -720,6 +951,29 @@ class OrderExecutor:
         """Get all open orders"""
         return await self.client.get_open_orders()
     
+    def get_farming_state(self) -> Dict:
+        """
+        Get complete farming state (Priority 5: Logging & Debugging).
+
+        Returns:
+            Farming state dictionary
+        """
+        return {
+            "farming_positions": {
+                mid: {
+                    "midpoint": pos.midpoint,
+                    "buy_order_id": pos.buy_order_id,
+                    "sell_order_id": pos.sell_order_id,
+                    "last_rebalance": pos.last_rebalance.isoformat(),
+                    "age_seconds": (datetime.now() - pos.created_at).total_seconds(),
+                    "order_value": pos.order_value
+                }
+                for mid, pos in self._farming_positions.items()
+            },
+            "cooldown_tracked_markets": len(self._market_last_action),
+            "midpoint_cache_size": len(self._midpoint_cache)
+        }
+
     def get_farming_positions(self) -> List[Dict[str, Any]]:
         """Get all active farming positions"""
         return [

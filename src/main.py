@@ -102,10 +102,22 @@ class TradingBot:
         self._scan_count = 0
         self._trade_count = 0
         self._last_scan_time: Optional[datetime] = None
+
+        # Skip reason tracking (Priority 0: Critical Safety & Priority 5: Logging)
+        self._skip_reasons: Dict[str, int] = {}
         
         # Setup signal handlers
         self._setup_signal_handlers()
-    
+
+    def _record_skip_reason(self, reason: str):
+        """
+        Record why a market was skipped (Priority 0 & 5).
+
+        Args:
+            reason: Skip reason category
+        """
+        self._skip_reasons[reason] = self._skip_reasons.get(reason, 0) + 1
+
     def _setup_signal_handlers(self):
         """Setup graceful shutdown handlers"""
         loop = asyncio.get_event_loop()
@@ -157,10 +169,13 @@ class TradingBot:
             per_city_cooldown_seconds=180.0,
             global_min_interval_seconds=1.0,
         )
+        # FIX #2: Force fresh weather - 5min cache instead of 6 hours!
+        # Old: 21600s (6 hours) caused 42min stale data in production
+        # New: 300s (5 minutes) for active trading
         self._weather_client = create_tomorrow_client(
             api_key=self._secrets.tomorrow_io_api_key,
             rate_limit_config=rate_limit_config,
-            cache_ttl_seconds=21600.0,  # 6 hours - temperature doesn't change rapidly
+            cache_ttl_seconds=300.0,  # 5 minutes - critical for fresh data
         )
 
         logger.info("Weather client initialized with rate limiting")
@@ -272,6 +287,12 @@ class TradingBot:
         
         while self._running:
             try:
+                # Step 0: Check circuit breaker (Priority 4: Risk Management)
+                if self._risk_manager._circuit_breaker_triggered:
+                    logger.critical("Circuit breaker triggered - trading halted")
+                    await self._handle_circuit_breaker()
+                    break
+
                 # Step 1: Check for auto-exit conditions first
                 await self._check_auto_exits()
                 
@@ -315,6 +336,9 @@ class TradingBot:
         scan_start = datetime.now()
 
         logger.info(f"Scan #{self._scan_count} starting...")
+
+        # Reset skip reasons for this scan (Priority 5: Logging)
+        self._skip_reasons = {}
 
         # Weather cache for this scan (temperature doesn't change every second!)
         weather_cache: Dict[str, Any] = {}
@@ -429,6 +453,10 @@ class TradingBot:
             if skipped_cities:
                 logger.warning(f"Scan #{self._scan_count} complete. Skipped rate-limited cities: {', '.join(skipped_cities)}")
 
+            # Log skip reasons summary (Priority 5: Logging)
+            if self._skip_reasons:
+                logger.info(f"Skip reasons: {dict(self._skip_reasons)}")
+
         except Exception as e:
             logger.error(f"Scan and trade error: {e}")
             await self._logger.log_error(
@@ -461,6 +489,7 @@ class TradingBot:
 
         if not can_trade:
             logger.debug(f"Skipping {market.id[:8]}...: {reason}")
+            self._record_skip_reason("risk_filter")
             return
 
         # Step 2: Get city name
@@ -469,14 +498,34 @@ class TradingBot:
         # Step 3: Check if we have weather data
         if not weather_data:
             logger.debug(f"Weather unavailable for {city_name}, skipping...")
+            self._record_skip_reason("no_weather")
             return
-        
+
         calculation = self._calculator.calculate_fair_price_from_weather(
             weather_data=weather_data,
             market_condition=market.question,
             market_price=current_price
         )
-        
+
+        # Validate calculation results (Priority 0: Critical Safety)
+        import math
+        if calculation.fair_price is None or math.isnan(calculation.fair_price):
+            logger.warning(f"Invalid fair_price (NaN/None) for {market.id[:8]}, skipping")
+            self._record_skip_reason("invalid_price")
+            return
+
+        if calculation.fair_price < 0.001 or calculation.fair_price > 0.999:
+            logger.warning(
+                f"Fair price out of range ({calculation.fair_price:.4f}) for {market.id[:8]}, skipping"
+            )
+            self._record_skip_reason("invalid_price")
+            return
+
+        if math.isnan(calculation.alpha):
+            logger.warning(f"Invalid alpha (NaN) for {market.id[:8]}, skipping")
+            self._record_skip_reason("invalid_alpha")
+            return
+
         # Step 4: Analyze alpha
         signal = self._alpha_detector.analyze_market(
             market_id=market.id,
@@ -485,7 +534,7 @@ class TradingBot:
             z_score=calculation.z_score,
             confidence=calculation.confidence
         )
-        
+
         # Step 5: Execute trade based on signal
         if signal.action in ["BUY", "SELL"]:
             logger.info(
@@ -493,7 +542,7 @@ class TradingBot:
                 f"Alpha: {float(signal.alpha):.1%} | "
                 f"Multiplier: {signal.size_multiplier:.1f}x"
             )
-            
+
             result = await self._executor.execute_trade(
                 market=market,
                 current_price=current_price,
@@ -501,9 +550,9 @@ class TradingBot:
                 alpha=signal.alpha,
                 action=signal.action
             )
-            
+
             self._trade_count += 1
-            
+
             # Log trade
             await self._logger.log_trade(
                 market_id=market.id,
@@ -514,19 +563,20 @@ class TradingBot:
                 alpha=signal.alpha,
                 reward_earned=result.reward_earned
             )
-            
+
             if result.success:
                 logger.info(f"Trade executed: {result.action} on {market.id[:8]}...")
             else:
                 logger.warning(f"Trade failed: {result.reason}")
-        
+
         elif signal.action == "HOLD":
             logger.debug(
                 f"HOLD: Alpha={signal.alpha:.1%}, "
                 f"Fair=${calculation.fair_price:.4f}, "
                 f"Market=${current_price:.4f}"
             )
-        
+            self._record_skip_reason("no_alpha")
+
         # Return None on successful analysis (no weather failure)
         return None
     
@@ -741,6 +791,38 @@ class TradingBot:
                 logger.debug(f"Data keys: {list(weather_data.get('data', {}).keys())}")
             return None
     
+    async def _handle_circuit_breaker(self):
+        """
+        Handle circuit breaker trigger (Priority 4: Risk Management).
+
+        Actions:
+        - Cancel all open orders
+        - Optionally close all positions (if configured)
+        - Log critical alert
+        - Pause trading
+        """
+        logger.critical("=" * 60)
+        logger.critical("CIRCUIT BREAKER TRIGGERED - EMERGENCY STOP")
+        logger.critical("=" * 60)
+
+        # Cancel all open orders
+        try:
+            cancelled = await self._executor.cancel_all_orders()
+            logger.info(f"Cancelled {cancelled} open orders")
+        except Exception as e:
+            logger.error(f"Error cancelling orders: {e}")
+
+        # Optionally close all positions
+        if self.config.risk.circuit_breaker_close_all:
+            logger.warning("Closing all positions due to circuit breaker...")
+            # This would require implementing position liquidation logic
+            # For now, we just log and let the user handle it manually
+
+        # Log final state
+        await self._log_final_stats()
+
+        logger.critical("Trading halted - manual intervention required")
+
     async def _check_auto_exits(self):
         """Check and execute auto-exits for profitable positions"""
         positions = self._risk_manager.positions
@@ -837,9 +919,11 @@ class TradingBot:
         logger.info("=" * 60)
     
     def get_status(self) -> Dict:
-        """Get current bot status"""
-        risk_summary = self._risk_manager.get_risk_summary() if self._risk_manager else {}
-        
+        """Get current bot status (Priority 5: Centralized State)"""
+        # Get centralized state from components
+        risk_state = self._risk_manager.get_all_state() if self._risk_manager else {}
+        farming_state = self._executor.get_farming_state() if self._executor else {}
+
         return {
             "running": self._running,
             "mode": "PAPER" if self.paper_trading else "LIVE",
@@ -847,7 +931,9 @@ class TradingBot:
             "trade_count": self._trade_count,
             "start_time": self._start_time.isoformat() if self._start_time else None,
             "last_scan": self._last_scan_time.isoformat() if self._last_scan_time else None,
-            "risk": risk_summary,
+            "skip_reasons": self._skip_reasons,
+            "risk": risk_state,
+            "farming": farming_state,
             "scanner_stats": self._scanner.get_stats() if self._scanner else {},
             "alpha_stats": self._alpha_detector.get_statistics() if self._alpha_detector else {}
         }

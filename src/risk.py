@@ -113,6 +113,17 @@ class RiskManager:
         self._daily_stats: Dict[datetime, DailyStats] = {}
         self._trading_paused = False
         self._pause_reason = None
+
+        # Daily trade limit tracking (Priority 4: Risk Management)
+        self._daily_trade_count = 0
+        self._max_daily_trades = self.risk.max_daily_trades
+        self._trade_count_reset_date = datetime.now().date()
+
+        # Circuit breaker tracking (Priority 4: Risk Management)
+        self._circuit_breaker_triggered = False
+        self._circuit_breaker_threshold = self.risk.circuit_breaker_pnl_pct
+        self._circuit_breaker_window_minutes = self.risk.circuit_breaker_window
+        self._recent_pnl: List[tuple[datetime, float]] = []
     
     @property
     def capital(self) -> float:
@@ -141,6 +152,63 @@ class RiskManager:
         """Get reason for pause"""
         return self._pause_reason
     
+    def check_circuit_breaker(self) -> tuple[bool, str]:
+        """
+        Check if circuit breaker should be triggered (Priority 4: Risk Management).
+
+        Circuit breaker triggers if total P&L drops by threshold % within the window.
+
+        Returns:
+            Tuple of (triggered: bool, reason: str)
+        """
+        if self._circuit_breaker_triggered:
+            return True, "Circuit breaker already triggered"
+
+        # Clean old P&L entries outside the window
+        from datetime import timedelta
+        cutoff_time = datetime.now() - timedelta(minutes=self._circuit_breaker_window_minutes)
+        self._recent_pnl = [(ts, pnl) for ts, pnl in self._recent_pnl if ts >= cutoff_time]
+
+        # Calculate total P&L change in window
+        if not self._recent_pnl:
+            return False, "No P&L changes in window"
+
+        total_pnl_change = sum(pnl for _, pnl in self._recent_pnl)
+
+        # Check if loss exceeds threshold
+        loss_pct = abs(total_pnl_change) / self._capital if self._capital > 0 else 0
+
+        if total_pnl_change < 0 and loss_pct >= self._circuit_breaker_threshold:
+            self._circuit_breaker_triggered = True
+            reason = (
+                f"Circuit breaker triggered: ${total_pnl_change:.2f} loss "
+                f"({loss_pct:.1%}) in {self._circuit_breaker_window_minutes} minutes"
+            )
+            logger.critical(reason)
+            return True, reason
+
+        return False, "Circuit breaker OK"
+
+    def _check_daily_trade_limit(self) -> tuple[bool, str]:
+        """
+        Check if daily trade limit has been exceeded (Priority 4: Risk Management).
+
+        Returns:
+            Tuple of (allowed: bool, reason: str)
+        """
+        # Reset counter if new day
+        today = datetime.now().date()
+        if today != self._trade_count_reset_date:
+            self._daily_trade_count = 0
+            self._trade_count_reset_date = today
+            logger.info(f"Daily trade counter reset for {today}")
+
+        # Check limit
+        if self._daily_trade_count >= self._max_daily_trades:
+            return False, f"Daily trade limit exceeded: {self._daily_trade_count}/{self._max_daily_trades}"
+
+        return True, "Trade allowed"
+
     def can_open_position(
         self,
         size: float,
@@ -183,14 +251,28 @@ class RiskManager:
             concentration = (self.capital - size) / self.capital
             if concentration < self.risk.position_concentration:
                 return False, f"Position concentration too high: {concentration:.1%}"
-        
+
+        # Check per-market exposure cap (Priority 4: Risk Management)
+        if market_id:
+            existing = self._positions.get(market_id)
+            if existing:
+                total_exposure = existing.size + size
+                if total_exposure > self.risk.max_exposure_per_market:
+                    return False, f"Per-market exposure cap exceeded: ${total_exposure:.2f} > ${self.risk.max_exposure_per_market:.2f}"
+
+        # Check daily trade limit (Priority 4: Risk Management)
+        if check_daily_limit:
+            can_trade_limit, limit_reason = self._check_daily_trade_limit()
+            if not can_trade_limit:
+                return False, limit_reason
+
         # Check daily loss limit
         if check_daily_limit:
             today_stats = self._get_today_stats()
             if today_stats.realized_pnl < -self.risk.max_daily_loss:
                 self._pause_trading(f"Daily loss limit exceeded: ${abs(today_stats.realized_pnl):.2f}")
                 return False, f"Daily loss limit exceeded: ${abs(today_stats.realized_pnl):.2f}"
-        
+
         return True, "Position allowed"
     
     def calculate_position_size(
@@ -267,14 +349,17 @@ class RiskManager:
         )
         
         self._positions[market_id] = position
-        
+
+        # Increment daily trade counter (Priority 4: Risk Management)
+        self._daily_trade_count += 1
+
         # Update daily stats
         stats = self._get_today_stats()
         stats.trades_count += 1
         stats.total_volume += size
-        
+
         logger.info(f"Opened position: {outcome} {size} @ ${price} on {market_id} (alpha={entry_alpha:.0%})")
-        
+
         return position
     
     def update_position(
@@ -335,20 +420,28 @@ class RiskManager:
         
         # Calculate realized PnL
         realized_pnl = position.unrealized_pnl
-        
+
+        # Record P&L for circuit breaker (Priority 4: Risk Management)
+        self._recent_pnl.append((datetime.now(), realized_pnl))
+
+        # Check circuit breaker
+        breaker_triggered, breaker_reason = self.check_circuit_breaker()
+        if breaker_triggered:
+            self._pause_trading(breaker_reason)
+
         # Update daily stats
         stats = self._get_today_stats()
         stats.realized_pnl += realized_pnl
-        
+
         if realized_pnl > 0:
             stats.winning_trades += 1
         else:
             stats.losing_trades += 1
-        
+
         # Check if this triggered daily loss limit
         if stats.realized_pnl < -self.risk.max_daily_loss:
             self._pause_trading(f"Daily loss limit exceeded: ${abs(stats.realized_pnl):.2f}")
-        
+
         # Remove position
         del self._positions[market_id]
         
@@ -419,6 +512,37 @@ class RiskManager:
         stats = self._get_today_stats()
         return stats.to_dict()
     
+    def get_all_state(self) -> Dict:
+        """
+        Get all risk manager state (Priority 5: Logging & Debugging).
+
+        Returns:
+            Complete state dictionary
+        """
+        return {
+            "positions": {
+                mid: {
+                    "outcome": pos.outcome,
+                    "size": pos.size,
+                    "avg_price": pos.avg_price,
+                    "current_price": pos.current_price,
+                    "unrealized_pnl": pos.unrealized_pnl,
+                    "pnl_percentage": pos.pnl_percentage,
+                    "opened_at": pos.opened_at.isoformat(),
+                    "entry_alpha": pos.entry_alpha
+                }
+                for mid, pos in self._positions.items()
+            },
+            "capital": self.capital,
+            "exposure": self.total_exposure,
+            "daily_stats": self._get_today_stats().to_dict(),
+            "paused": self._trading_paused,
+            "pause_reason": self._pause_reason,
+            "daily_trade_count": self._daily_trade_count,
+            "max_daily_trades": self._max_daily_trades,
+            "circuit_breaker_triggered": self._circuit_breaker_triggered
+        }
+
     def get_risk_summary(self) -> Dict:
         """Get current risk summary"""
         positions_value = sum(p.current_value for p in self._positions.values())

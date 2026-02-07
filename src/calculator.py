@@ -11,6 +11,7 @@ Mathematical Model:
 """
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
@@ -66,9 +67,13 @@ class FairPriceCalculator:
     
     # Default sigma in Fahrenheit (3.5°F = 1.9°C)
     DEFAULT_SIGMA_FAHRENHEIT = 3.5
-    
+
     # Default expected temperature (historical average)
     DEFAULT_EXPECTED_TEMP = 65.0
+
+    # Price validation constants (Priority 0: Critical Safety)
+    MIN_PRICE = 0.001  # Minimum valid price
+    MAX_PRICE = 0.999  # Maximum valid price
     
     # Temperature thresholds for common market conditions
     TEMP_THRESHOLDS = {
@@ -106,9 +111,42 @@ class FairPriceCalculator:
         """
         self.sigma = sigma or self.DEFAULT_SIGMA_FAHRENHEIT
         self.default_expected_temp = default_expected_temp or self.DEFAULT_EXPECTED_TEMP
-        
+
         # Pre-compute for performance
         self._normal_dist = stats.norm(loc=0, scale=1)
+
+    def _validate_price(self, price: float, context: str = "") -> Optional[float]:
+        """
+        Validate a price value for sanity (Priority 0: Critical Safety).
+
+        Checks for:
+        - NaN values
+        - Negative values
+        - Values greater than 1.0
+
+        Args:
+            price: Price value to validate
+            context: Context string for error logging
+
+        Returns:
+            Validated price or None if invalid
+        """
+        # Check for NaN
+        if math.isnan(price):
+            logger.error(f"CRITICAL: NaN price detected{' in ' + context if context else ''}")
+            return None
+
+        # Check for negative
+        if price < 0:
+            logger.error(f"CRITICAL: Negative price detected: {price:.4f}{' in ' + context if context else ''}")
+            return None
+
+        # Check for > 1.0
+        if price > 1.0:
+            logger.error(f"CRITICAL: Price > 1.0 detected: {price:.4f}{' in ' + context if context else ''}")
+            return None
+
+        return price
     
     def calculate_fair_price(
         self,
@@ -161,9 +199,18 @@ class FairPriceCalculator:
             # Default: use midpoint with small adjustment
             fair_price = 0.5
             z_score = 0
-        
+
+        # Validate price before clamping (Priority 0: Critical Safety)
+        validated_price = self._validate_price(fair_price, f"calculate_fair_price for {market_condition[:30]}")
+        if validated_price is None:
+            # Return safe fallback on validation failure
+            logger.warning(f"Price validation failed, using fallback price 0.50")
+            fair_price = 0.5
+        else:
+            fair_price = validated_price
+
         # Clamp fair price to valid range
-        fair_price = np.clip(fair_price, 0.01, 0.99)
+        fair_price = np.clip(fair_price, self.MIN_PRICE, self.MAX_PRICE)
         
         # Calculate alpha: how under/overpriced is the market?
         alpha = self._calculate_alpha(fair_price, market_price)
@@ -212,6 +259,23 @@ class FairPriceCalculator:
         relevant_temp = self._get_relevant_temperature(
             weather_data, market_condition
         )
+
+        # Validate temperature input (Priority 0: Critical Safety)
+        if relevant_temp is None or math.isnan(relevant_temp) or relevant_temp < -100 or relevant_temp > 200:
+            logger.error(f"CRITICAL: Invalid temperature from weather data: {relevant_temp}")
+            # Return safe fallback calculation
+            return PriceCalculation(
+                fair_price=0.5,
+                z_score=0.0,
+                confidence=0.0,
+                alpha=0.0,
+                market_price=market_price,
+                forecast_temp=65.0,
+                expected_temp=65.0,
+                sigma=self.sigma,
+                condition_type="error",
+                recommendation="HOLD - Invalid weather data"
+            )
 
         # Extract threshold from market question if not provided
         if expected_temp is None:

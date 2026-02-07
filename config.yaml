@@ -25,6 +25,12 @@ risk:
   max_open_positions: 3
   position_concentration: 0.20
   profit_target: 1.0
+  # Priority 4: Risk Management
+  max_exposure_per_market: 10.0    # Max $10 exposure per individual market
+  max_daily_trades: 200            # Daily trade limit to prevent over-trading
+  circuit_breaker_pnl_pct: 0.20    # Trigger circuit breaker at 20% loss
+  circuit_breaker_window: 60       # Within 60 minutes
+  circuit_breaker_close_all: false # Don't auto-close positions on trigger
 
 scanner:
   scan_interval: 30
@@ -59,6 +65,34 @@ logging:
     url: ${SUPABASE_URL}
     key: ${SUPABASE_KEY}
     table_prefix: polymarket_
+
+# Priority 1: Cost Control
+execution:
+  order_timeout: 30
+  retry_attempts: 3
+  retry_delay: 2
+  signing: {}
+  cooldown_seconds: 900            # 15 minutes cooldown per market
+  no_op_threshold: 0.001           # 0.1% price difference for no-op detection
+
+# Farming configuration
+farming:
+  enabled: true
+  price_threshold: 0.15
+  max_spread: 0.05
+  farming_size: 2.0
+  rebalance_interval: 120          # Priority 1: Increased to 120s from 60s
+  midpoint_movement_threshold: 0.01  # Priority 1: Increased to 1.0% from 0.5%
+  blue_zone_buffer: 0.01
+
+# Health monitoring
+health:
+  enabled: true
+  check_interval: 300
+  webhook: {}
+  alerts:
+    circuit_breaker: true
+    daily_loss_limit: true
 
 development:
   dry_run: false

@@ -30,6 +30,11 @@ class RiskConfig:
     max_open_positions: int
     position_concentration: float
     profit_target: float
+    max_exposure_per_market: float = 10.0  # Priority 4: Risk Management
+    max_daily_trades: int = 200  # Priority 4: Risk Management
+    circuit_breaker_pnl_pct: float = 0.20  # Priority 4: 20% loss threshold
+    circuit_breaker_window: int = 60  # Priority 4: minutes
+    circuit_breaker_close_all: bool = False  # Priority 4
 
 
 @dataclass
@@ -97,6 +102,8 @@ class ExecutionConfig:
     retry_attempts: int
     retry_delay: int
     signing: Dict[str, Any]
+    cooldown_seconds: int = 900  # Priority 1: Cost Control - 15 min default
+    no_op_threshold: float = 0.001  # Priority 1: 0.1% price difference threshold
 
 
 @dataclass
@@ -264,7 +271,12 @@ class ConfigLoader:
                 max_daily_loss=risk_cfg['max_daily_loss'],
                 max_open_positions=risk_cfg['max_open_positions'],
                 position_concentration=risk_cfg['position_concentration'],
-                profit_target=risk_cfg['profit_target']
+                profit_target=risk_cfg['profit_target'],
+                max_exposure_per_market=risk_cfg.get('max_exposure_per_market', 10.0),
+                max_daily_trades=risk_cfg.get('max_daily_trades', 200),
+                circuit_breaker_pnl_pct=risk_cfg.get('circuit_breaker_pnl_pct', 0.20),
+                circuit_breaker_window=risk_cfg.get('circuit_breaker_window', 60),
+                circuit_breaker_close_all=risk_cfg.get('circuit_breaker_close_all', False)
             ),
             farming=FarmingConfig(
                 enabled=farming_cfg['enabled'],
@@ -305,7 +317,9 @@ class ConfigLoader:
                 order_timeout=exec_cfg['order_timeout'],
                 retry_attempts=exec_cfg['retry_attempts'],
                 retry_delay=exec_cfg['retry_delay'],
-                signing=exec_cfg['signing']
+                signing=exec_cfg['signing'],
+                cooldown_seconds=exec_cfg.get('cooldown_seconds', 900),
+                no_op_threshold=exec_cfg.get('no_op_threshold', 0.001)
             ),
             development=DevelopmentConfig(
                 dry_run=dev_cfg['dry_run'],
