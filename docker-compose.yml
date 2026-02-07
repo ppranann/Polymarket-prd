@@ -1,18 +1,22 @@
+version: '3.8'
+
+# IMPORTANT: Run ./deploy.sh to automatically pull and deploy the latest image
+# This file will be updated automatically with the correct ECR image URL
 
 services:
   weather-bot:
-    build: .
+    # Image URL is set dynamically by deploy.sh
+    image: ${ECR_IMAGE:-polymarket-weather-bot:latest}
     container_name: polymarket-weather-bot
     environment:
-      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
       - AWS_SECRET_NAME=polymarket-bot/production
-      - LOG_LEVEL=INFO
-      # Override with paper trading for safety
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONPATH=/app
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs
-      - ~/.aws:/root/.aws:ro  # For AWS credentials
+      - ~/.aws:/root/.aws:ro
     restart: unless-stopped
     command: ["python", "-m", "src.main", "--paper", "--config", "/app/config/config.yaml"]
     logging:
@@ -20,19 +24,4 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
-
-  # Optional: Prometheus metrics exporter
-  metrics:
-    image: prom/node-exporter:latest
-    container_name: bot-metrics
-    ports:
-      - "9090:9090"
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--path.rootfs=/rootfs'
 

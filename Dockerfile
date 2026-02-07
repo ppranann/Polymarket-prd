@@ -1,5 +1,13 @@
 FROM python:3.11-slim
 
+# Build arguments for versioning
+ARG VERSION=unknown
+ARG TIMESTAMP=unknown
+
+# Set version labels
+LABEL version="${VERSION}"
+LABEL timestamp="${TIMESTAMP}"
+
 # Set working directory
 WORKDIR /app
 
