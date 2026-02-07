@@ -200,9 +200,9 @@ class AuditLogger:
                 
                 if response.data:
                     return response.data[0].get("id")
-                    
+
             except Exception as e:
-                logger.warning(f"Failed to log to Supabase: {e}")
+                logger.debug(f"Failed to log to Supabase: {e}")
         
         # Buffer for later sync
         self._log_buffer.append(log_entry.to_dict())
