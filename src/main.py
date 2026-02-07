@@ -34,6 +34,7 @@ from .executor import create_order_executor, OrderExecutor
 from .alpha import create_alpha_detector, AlphaDetector
 from .auto_exit import create_auto_exit_manager, AutoExitManager
 from .logger import create_audit_logger, AuditLogger
+from .performance import create_performance_reporter, PerformanceReporter
 
 # Configure logging
 logging.basicConfig(
@@ -93,6 +94,7 @@ class TradingBot:
         self._alpha_detector = None
         self._auto_exit = None
         self._logger = None
+        self._performance = None
         
         # Bot state
         self._running = False
@@ -180,7 +182,15 @@ class TradingBot:
         )
         
         logger.info("Risk Manager initialized")
-        
+
+        # Initialize Performance Reporter
+        logger.info("Initializing Performance Reporter...")
+        self._performance = create_performance_reporter(
+            risk_manager=self._risk_manager
+        )
+
+        logger.info("Performance Reporter initialized")
+
         # Initialize Scanner
         logger.info("Initializing Market Scanner...")
         self._scanner = create_market_scanner(
@@ -276,10 +286,16 @@ class TradingBot:
                 
                 # Step 3: Scan for new opportunities
                 await self._scan_and_trade()
-                
+
                 # Update stats
                 self._scan_count += 1
-                
+
+                # Step 4: Show P&L (compact after each scan, full every hour)
+                if self._performance.should_print_full_summary(interval_minutes=60):
+                    self._performance.print_performance_summary()
+                else:
+                    self._performance.print_compact_summary()
+
                 # Wait before next scan
                 await asyncio.sleep(scan_interval)
                 
