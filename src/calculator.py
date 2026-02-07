@@ -282,6 +282,10 @@ class FairPriceCalculator:
             extracted_threshold = self.get_temperature_threshold_from_condition(market_condition)
             if extracted_threshold is not None:
                 expected_temp = extracted_threshold
+                logger.debug(f"✅ Extracted threshold: {extracted_threshold}°F from '{market_condition[:50]}...'")
+            else:
+                logger.warning(f"❌ Failed to extract threshold from: '{market_condition[:80]}' - using default {self.default_expected_temp}°F")
+                expected_temp = self.default_expected_temp
 
         return self.calculate_fair_price(
             market_condition=market_condition,
@@ -545,15 +549,23 @@ class FairPriceCalculator:
         # Try to extract from pattern
         import re
 
-        # First try to match range patterns like "30-34°F" or "30-34 degrees"
+        # First try to match range patterns like "30-34°F", "30 to 34", "30-34 degrees"
         # These are common in bucket markets
-        range_pattern = r'(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)\s*[°]?[CF]?'
-        range_match = re.search(range_pattern, condition)
-        if range_match:
-            # Use midpoint of range as threshold
-            low = float(range_match.group(1))
-            high = float(range_match.group(2))
-            return (low + high) / 2.0
+        # Enhanced regex to handle: "30-34", "30 to 34", "30 - 34", etc.
+        range_patterns = [
+            r'(\d+\.?\d*)\s*(?:to|-|–|~)\s*(\d+\.?\d*)\s*[°]?[CF]?',  # "30 to 34" or "30-34"
+            r'(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)',  # Simple dash pattern
+        ]
+
+        for range_pattern in range_patterns:
+            range_match = re.search(range_pattern, condition, re.IGNORECASE)
+            if range_match:
+                # Use midpoint of range as threshold
+                low = float(range_match.group(1))
+                high = float(range_match.group(2))
+                midpoint = (low + high) / 2.0
+                logger.debug(f"Extracted range {low}-{high}, midpoint: {midpoint}°F")
+                return midpoint
 
         # Look for patterns like "above 70" or "temp > 65"
         patterns = [
