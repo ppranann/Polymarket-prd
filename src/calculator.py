@@ -198,13 +198,13 @@ class FairPriceCalculator:
     ) -> PriceCalculation:
         """
         Calculate fair price using WeatherData object.
-        
+
         Args:
             weather_data: WeatherData from Tomorrow.io client
             market_condition: Market condition description
             market_price: Current market price
             expected_temp: Override expected temperature
-            
+
         Returns:
             PriceCalculation result
         """
@@ -212,7 +212,13 @@ class FairPriceCalculator:
         relevant_temp = self._get_relevant_temperature(
             weather_data, market_condition
         )
-        
+
+        # Extract threshold from market question if not provided
+        if expected_temp is None:
+            extracted_threshold = self.get_temperature_threshold_from_condition(market_condition)
+            if extracted_threshold is not None:
+                expected_temp = extracted_threshold
+
         return self.calculate_fair_price(
             market_condition=market_condition,
             forecasted_temp=relevant_temp,
@@ -474,7 +480,17 @@ class FairPriceCalculator:
         
         # Try to extract from pattern
         import re
-        
+
+        # First try to match range patterns like "30-34°F" or "30-34 degrees"
+        # These are common in bucket markets
+        range_pattern = r'(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)\s*[°]?[CF]?'
+        range_match = re.search(range_pattern, condition)
+        if range_match:
+            # Use midpoint of range as threshold
+            low = float(range_match.group(1))
+            high = float(range_match.group(2))
+            return (low + high) / 2.0
+
         # Look for patterns like "above 70" or "temp > 65"
         patterns = [
             r'above\s*(\d+\.?\d*)',
@@ -484,12 +500,12 @@ class FairPriceCalculator:
             r'<\s*(\d+\.?\d*)',
             r'under\s*(\d+\.?\d*)',
         ]
-        
+
         for pattern in patterns:
             match = re.search(pattern, condition.lower())
             if match:
                 return float(match.group(1))
-        
+
         return None
 
 

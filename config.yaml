@@ -44,7 +44,7 @@ scanner:
     - Heathrow
     - Temperature
     - Rain
-  weather_cache_ttl: 900
+  weather_cache_ttl: 120  # 2 minutes - keep fresh for active trading
   snipe_price_threshold: 0.80     # Match scanner for testing
 
 alpha:

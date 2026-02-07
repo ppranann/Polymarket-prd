@@ -765,19 +765,33 @@ class TradingBot:
             # Execute exits
             for signal in exit_signals:
                 try:
-                    await self._auto_exit.execute_exit(signal)
-                    
-                    await self._logger.log_exit(
-                        market_id=signal.market_id,
-                        profit_loss=signal.profit_usdc,
-                        exit_reason=signal.reason,
-                        duration_hours=(
-                            datetime.now() - signal.position.opened_at
-                        ).total_seconds() / 3600
-                    )
-                    
+                    result_signal = await self._auto_exit.execute_exit(signal)
+
+                    # Only log success if execution actually succeeded
+                    if result_signal.executed:
+                        await self._logger.log_exit(
+                            market_id=signal.market_id,
+                            profit_loss=signal.profit_usdc,
+                            exit_reason=signal.reason,
+                            duration_hours=(
+                                datetime.now() - signal.position.opened_at
+                            ).total_seconds() / 3600
+                        )
+                    else:
+                        # Log failure
+                        await self._logger.log_error(
+                            error_type="AUTO_EXIT_FAILED",
+                            error_message=result_signal.reason,
+                            market_id=signal.market_id
+                        )
+
                 except Exception as e:
                     logger.error(f"Auto-exit failed for {signal.market_id}: {e}")
+                    await self._logger.log_error(
+                        error_type="AUTO_EXIT_EXCEPTION",
+                        error_message=str(e),
+                        market_id=signal.market_id
+                    )
     
     async def _shutdown(self, signum=None):
         """Graceful shutdown"""

@@ -227,6 +227,20 @@ class PolymarketClient:
             size=size
         )
 
+    async def place_market_order(self, market_id: str, side: str, size: float, price: float = None, **kwargs):
+        """
+        Mock market order for PAPER trading (instant execution).
+        For paper mode, this is the same as limit order but represents instant fill.
+        """
+        self._logger.debug(f"PAPER MARKET ORDER: {side.upper()} {size} @ market on {market_id}")
+        return MockOrder(
+            order_id=f"mock-market-{market_id[:8]}",
+            market_id=market_id,
+            side=side,
+            price=price or 0.5,  # Use provided price or default
+            size=size
+        )
+
     async def get_order_book(self, token_id: str):
         """Mock order book to allow farming logic to calculate midpoints."""
         # Returns a dummy spread so the farming logic doesn't crash

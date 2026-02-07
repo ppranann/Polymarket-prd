@@ -501,13 +501,13 @@ class OrderExecutor:
             id=market_id,
             question="",
             condition_id=market_id,
-            outcome="YES",
             yes_price=0.5,
             no_price=0.5,
+            last_trade_price=0.5,
             active=True,
-            liquidity_rewards_enabled=True,
+            category="weather",
             volume=0,
-            category="weather"
+            liquidity_rewards_enabled=True
         )
     
     async def _place_order(

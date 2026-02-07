@@ -197,9 +197,6 @@ class AutoExitManager:
         )
         
         try:
-            # Get market info
-            market = await self.client.get_market(position.market_id)
-            
             # Place market order to exit
             order = await self.client.place_market_order(
                 market_id=position.market_id,
