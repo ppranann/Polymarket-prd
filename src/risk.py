@@ -201,25 +201,36 @@ class RiskManager:
     ) -> float:
         """
         Calculate position size based on alpha and risk parameters.
-        
+
+        Uses percentage-based sizing that scales with capital growth.
+
         Args:
-            base_size: Base position size
+            base_size: Base position size (can be ignored if using percentage)
             alpha: Current alpha (underpricing percentage)
             max_multiplier: Maximum size multiplier
-            
+
         Returns:
             Adjusted position size
         """
+        # Calculate base size as percentage of current capital
+        max_trade_size_pct = getattr(self.risk, 'max_trade_size_pct', None)
+        if max_trade_size_pct and self.capital > 0:
+            # Use percentage-based sizing (scales with capital)
+            base_size_pct = self.capital * max_trade_size_pct
+        else:
+            # Fallback to fixed base_size if percentage not configured
+            base_size_pct = base_size
+
         # Scale size based on alpha
         if alpha > 0:
             # Positive alpha: increase size
             multiplier = 1 + min(alpha, 1.0) * (max_multiplier - 1)
-            size = base_size * multiplier
+            size = base_size_pct * multiplier
         else:
             # Negative or zero alpha: use base size
-            size = base_size
-        
-        # Clamp to max trade size
+            size = base_size_pct
+
+        # Clamp to fixed max trade size (hard limit)
         return min(size, self.risk.max_trade_size)
     
     def open_position(
