@@ -534,53 +534,73 @@ class FairPriceCalculator:
     ) -> Optional[float]:
         """
         Extract temperature threshold from market condition.
-        
+
+        CRITICAL FIX: Handles Celsius/Fahrenheit conversion!
+        - London/Seoul markets use °C
+        - NYC markets use °F
+        - Converts everything to °F for comparison
+
         Args:
             condition: Market condition string
-            
+
         Returns:
-            Temperature threshold or None
+            Temperature threshold in Fahrenheit, or None
         """
         # Check predefined thresholds
         for key, threshold in self.TEMP_THRESHOLDS.items():
             if key.replace("_", " ") in condition.lower():
                 return threshold
-        
+
         # Try to extract from pattern
         import re
 
-        # First try to match range patterns like "30-34°F", "30 to 34", "30-34 degrees"
-        # These are common in bucket markets
-        # Enhanced regex to handle: "30-34", "30 to 34", "30 - 34", etc.
+        # CRITICAL: Detect if temperature is in Celsius or Fahrenheit
+        is_celsius = '°C' in condition or '°c' in condition or ' C' in condition
+
+        # First try to match range patterns like "30-34°F", "30 to 34°C"
+        # Enhanced regex to support NEGATIVE temperatures (e.g., "-4°C")
         range_patterns = [
-            r'(\d+\.?\d*)\s*(?:to|-|–|~)\s*(\d+\.?\d*)\s*[°]?[CF]?',  # "30 to 34" or "30-34"
-            r'(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)',  # Simple dash pattern
+            r'(-?\d+\.?\d*)\s*(?:to|-|–|~)\s*(-?\d+\.?\d*)\s*[°]?[CF]?',  # Supports negative
+            r'(-?\d+\.?\d*)\s*[-–]\s*(-?\d+\.?\d*)',  # Simple dash
         ]
 
         for range_pattern in range_patterns:
             range_match = re.search(range_pattern, condition, re.IGNORECASE)
             if range_match:
-                # Use midpoint of range as threshold
                 low = float(range_match.group(1))
                 high = float(range_match.group(2))
                 midpoint = (low + high) / 2.0
-                logger.debug(f"Extracted range {low}-{high}, midpoint: {midpoint}°F")
-                return midpoint
 
-        # Look for patterns like "above 70" or "temp > 65"
-        patterns = [
-            r'above\s*(\d+\.?\d*)',
-            r'>\s*(\d+\.?\d*)',
-            r'over\s*(\d+\.?\d*)',
-            r'below\s*(\d+\.?\d*)',
-            r'<\s*(\d+\.?\d*)',
-            r'under\s*(\d+\.?\d*)',
+                # Convert Celsius to Fahrenheit if needed
+                if is_celsius:
+                    midpoint_f = (midpoint * 9/5) + 32
+                    logger.debug(f"Extracted {low}-{high}°C, midpoint: {midpoint}°C = {midpoint_f:.1f}°F")
+                    return midpoint_f
+                else:
+                    logger.debug(f"Extracted {low}-{high}°F, midpoint: {midpoint}°F")
+                    return midpoint
+
+        # Look for single temperature patterns: "13°C or higher", "-4°C", "15°F or below"
+        # CRITICAL: Support negative temps (common in winter)
+        temp_patterns = [
+            r'(-?\d+\.?\d*)\s*[°]?[CF]?\s*(?:or\s+)?(?:higher|above|over)',  # "13°C or higher"
+            r'(-?\d+\.?\d*)\s*[°]?[CF]?\s*(?:or\s+)?(?:lower|below|under)',  # "15°F or below"
+            r'\?\s*-\s*(-?\d+\.?\d*)\s*[°]?[CF]?(?:\s|$)',  # "February 7? - -4°C"
         ]
 
-        for pattern in patterns:
-            match = re.search(pattern, condition.lower())
+        for pattern in temp_patterns:
+            match = re.search(pattern, condition, re.IGNORECASE)
             if match:
-                return float(match.group(1))
+                temp = float(match.group(1))
+
+                # Convert Celsius to Fahrenheit if needed
+                if is_celsius:
+                    temp_f = (temp * 9/5) + 32
+                    logger.debug(f"✅ Extracted {temp}°C = {temp_f:.1f}°F")
+                    return temp_f
+                else:
+                    logger.debug(f"✅ Extracted {temp}°F")
+                    return temp
 
         return None
 
