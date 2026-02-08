@@ -282,10 +282,16 @@ class FairPriceCalculator:
             extracted_threshold = self.get_temperature_threshold_from_condition(market_condition)
             if extracted_threshold is not None:
                 expected_temp = extracted_threshold
-                logger.debug(f"✅ Extracted threshold: {extracted_threshold}°F from '{market_condition[:50]}...'")
             else:
                 logger.warning(f"❌ Failed to extract threshold from: '{market_condition[:80]}' - using default {self.default_expected_temp}°F")
                 expected_temp = self.default_expected_temp
+
+        # Parse condition type for logging
+        cond_type = self._parse_condition_type(market_condition)
+        logger.info(
+            f"CALC: type={cond_type} | threshold={expected_temp:.1f}°F | "
+            f"forecast={relevant_temp:.1f}°F | question='{market_condition[:60]}'"
+        )
 
         return self.calculate_fair_price(
             market_condition=market_condition,
@@ -297,23 +303,35 @@ class FairPriceCalculator:
     def _parse_condition_type(self, condition: str) -> str:
         """
         Parse market condition string to determine calculation type.
-        
+
+        Polymarket question formats:
+        - "13°C or higher" → above
+        - "15°F or below" → below
+        - "-4°C" (standalone threshold) → above (default for "highest temp" questions)
+
         Args:
             condition: Market condition description
-            
+
         Returns:
             Condition type: "above", "below", "precipitation", "range", or "other"
         """
         condition_lower = condition.lower()
-        
-        if "above" in condition_lower or "gt" in condition_lower or ">" in condition:
+
+        # CRITICAL FIX: Polymarket uses "higher"/"lower", not just "above"/"below"
+        above_keywords = ["above", "higher", "or more", "at least", "over", "gt"]
+        below_keywords = ["below", "lower", "or less", "at most", "under", "lt"]
+
+        if any(kw in condition_lower for kw in above_keywords) or ">" in condition:
             return "above"
-        elif "below" in condition_lower or "lt" in condition_lower or "<" in condition:
+        elif any(kw in condition_lower for kw in below_keywords) or "<" in condition:
             return "below"
         elif any(word in condition_lower for word in ["rain", "precip", "snow", "storm"]):
             return "precipitation"
         elif "between" in condition_lower or "range" in condition_lower:
             return "range"
+        elif "highest temperature" in condition_lower:
+            # Default: "Highest temperature in Seoul? - -4°C" with no direction keyword
+            return "above"
         else:
             return "other"
     

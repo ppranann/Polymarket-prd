@@ -557,55 +557,54 @@ class OrderExecutor:
     ) -> float:
         """
         Calculate the Adjusted Midpoint for farming.
-        
-        The 2026 reward formula uses Adjusted Midpoint which considers:
-        - Current YES/NO prices
-        - Order book depth
-        - Top-tier liquidity positions
-        
-        For simplicity, we use:
-        - Midpoint = Current price (for <$0.10 markets)
-        - Or fetch from order book if available
-        
+
+        CRITICAL FIX: For wide-spread markets (common in weather),
+        the orderbook midpoint can be $0.50+ even when the market
+        trades at $0.04. This causes sell orders at $0.52 that never fill.
+
+        Now: Use orderbook midpoint ONLY if it's close to current_price.
+        Otherwise use current_price as the midpoint.
+
         Args:
             market: Market to calculate for
             current_price: Current YES price
-            
+
         Returns:
             Adjusted midpoint price
         """
         market_id = market.id
-        
+
         # Try to get midpoint from order book
         try:
             book = await self.client.get_order_book(market_id)
-            
+
             if book and 'bids' in book and 'asks' in book:
                 bids = book['bids']
                 asks = book['asks']
-                
+
                 if bids and asks:
-                    # Best bid and ask
                     best_bid = float(bids[0]['price'])
                     best_ask = float(asks[0]['price'])
-                    
-                    # Calculate midpoint
-                    midpoint = (best_bid + best_ask) / 2
-                    
-                    # Cache for rebalance checks
-                    self._midpoint_cache[market_id] = midpoint
-                    
-                    logger.debug(f"Midpoint from order book: {midpoint:.4f}")
-                    return midpoint
-                    
+                    book_midpoint = (best_bid + best_ask) / 2
+
+                    # SANITY CHECK: Only use orderbook midpoint if it's
+                    # within 3x of current price (prevents $0.51 midpoint
+                    # on a $0.04 market)
+                    if current_price > 0.01 and book_midpoint < current_price * 3:
+                        self._midpoint_cache[market_id] = book_midpoint
+                        return book_midpoint
+                    else:
+                        logger.debug(
+                            f"Ignoring wide orderbook midpoint {book_midpoint:.4f} "
+                            f"for {market_id[:8]} (price: {current_price:.4f})"
+                        )
+
         except Exception as e:
             logger.debug(f"Could not get order book for {market_id[:8]}: {e}")
-        
-        # Fallback: use current price as midpoint
-        # For <$0.10 markets, this is reasonable
+
+        # Use current price as midpoint (safe for cheap markets)
         midpoint = current_price
         self._midpoint_cache[market_id] = midpoint
-        
         return midpoint
     
     async def _cancel_farming_position(self, market_id: str) -> bool:
