@@ -72,7 +72,7 @@ execution:
   retry_attempts: 3
   retry_delay: 2
   signing: {}
-  cooldown_seconds: 900            # 15 minutes cooldown per market
+  cooldown_seconds: 120            # 2 minutes cooldown per market (was 900 = 15min, blocked trades)
   no_op_threshold: 0.001           # 0.1% price difference for no-op detection
 
 # Farming configuration

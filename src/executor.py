@@ -354,8 +354,26 @@ class OrderExecutor:
             )
         
         # Determine execution strategy
-        if current_price < self.farming_config.price_threshold:
-            # Farming mode: place both buy and sell around midpoint
+        # CRITICAL FIX: When alpha signals a directional trade (BUY/SELL),
+        # use _place_order() which registers positions in the risk manager.
+        # Farming places symmetric BUY+SELL but never calls risk.open_position(),
+        # so positions were invisible (showed 0 positions for 2+ hours).
+        if action in ("BUY", "SELL") and abs(alpha) >= 0.15:
+            # Directional trade: strong alpha signal → take a position
+            logger.info(
+                f"Directional {action} on {market.id[:8]} "
+                f"(alpha={alpha:.1%}, price=${current_price:.4f})"
+            )
+            return await self._place_order(
+                market=market,
+                side=action,
+                price=current_price,
+                size=size,
+                post_only=True,
+                entry_alpha=alpha
+            )
+        elif current_price < self.farming_config.price_threshold:
+            # Farming mode: weak/no signal, farm for liquidity rewards
             return await self._farm_liquidity_adjusted(
                 market=market,
                 current_price=current_price,

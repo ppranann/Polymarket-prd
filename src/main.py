@@ -166,16 +166,16 @@ class TradingBot:
             max_retries=5,
             base_backoff_seconds=2.0,
             max_backoff_seconds=60.0,
-            per_city_cooldown_seconds=180.0,
-            global_min_interval_seconds=1.0,
+            per_city_cooldown_seconds=600.0,  # 10 min cooldown after 429 (was 180s = retry too fast)
+            global_min_interval_seconds=2.0,  # 2s between API calls (was 1s)
         )
-        # FIX #2: Force fresh weather - 5min cache instead of 6 hours!
-        # Old: 21600s (6 hours) caused 42min stale data in production
-        # New: 300s (5 minutes) for active trading
+        # Weather cache: 10min TTL balances freshness vs rate limits.
+        # 3 cities × 1 call per 10min = 18 calls/hour (well within Tomorrow.io limits)
+        # Old: 300s (5 min) caused 36 calls/hour → constant 429 rate limits
         self._weather_client = create_tomorrow_client(
             api_key=self._secrets.tomorrow_io_api_key,
             rate_limit_config=rate_limit_config,
-            cache_ttl_seconds=300.0,  # 5 minutes - critical for fresh data
+            cache_ttl_seconds=600.0,  # 10 minutes - prevents rate limit loops
         )
 
         logger.info("Weather client initialized with rate limiting")
