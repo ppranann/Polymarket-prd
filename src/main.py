@@ -770,14 +770,31 @@ class TradingBot:
 
             from datetime import datetime
 
+            # CRITICAL FIX: Tomorrow.io returns Celsius by default!
+            # All calculator logic uses Fahrenheit (sigma=3.5°F, thresholds in °F)
+            # Must convert here so everything is consistent
+            def c_to_f(celsius: float) -> float:
+                return (celsius * 9.0 / 5.0) + 32.0
+
+            raw_temp = current.get("temperature", 18.3)
+            raw_feels = current.get("temperatureApparent", 18.3)
+            raw_min = min(temp_mins) if temp_mins else 15.0
+            raw_max = max(temp_maxs) if temp_maxs else 21.0
+            raw_mean = sum(temps) / len(temps) if temps else 18.3
+
+            logger.info(
+                f"WEATHER RAW (°C): temp={raw_temp:.1f} min={raw_min:.1f} "
+                f"max={raw_max:.1f} mean={raw_mean:.1f}"
+            )
+
             return WeatherData(
                 location=(0, 0),  # Not needed for calculation
                 fetched_at=datetime.now(),
-                current_temp=current.get("temperature", 65.0),
-                feels_like=current.get("temperatureApparent", 65.0),
-                temp_min=min(temp_mins) if temp_mins else 60.0,
-                temp_max=max(temp_maxs) if temp_maxs else 70.0,
-                temp_mean=sum(temps) / len(temps) if temps else 65.0,
+                current_temp=c_to_f(raw_temp),
+                feels_like=c_to_f(raw_feels),
+                temp_min=c_to_f(raw_min),
+                temp_max=c_to_f(raw_max),
+                temp_mean=c_to_f(raw_mean),
                 precipitation_probability=current.get("precipitationProbability", 0.0),
                 precipitation_amount=current.get("precipitation"),
                 weather_code=current.get("weatherCode"),
