@@ -515,8 +515,12 @@ class TradingBot:
             self._record_skip_reason("no_weather")
             return
 
+        # CRITICAL: Use date-specific forecast, not overall max across all days
+        target_date, days_out = self._extract_target_date(market.question)
+        date_weather = self._get_weather_for_date(weather_data, target_date)
+
         calculation = self._calculator.calculate_fair_price_from_weather(
-            weather_data=weather_data,
+            weather_data=date_weather,
             market_condition=market.question,
             market_price=current_price
         )
@@ -550,7 +554,6 @@ class TradingBot:
         )
 
         # Log prediction for calibration (Phase 2)
-        target_date, days_out = self._extract_target_date(market.question)
         prediction = PredictionLog(
             market_id=market.id,
             question_text=market.question[:200],
@@ -749,6 +752,49 @@ class TradingBot:
         
         return "unknown"
 
+    def _get_weather_for_date(self, weather_data, target_date: str):
+        """
+        Get weather forecast filtered to a specific target date.
+
+        Without this, all markets in a city use the same temp_max across ALL
+        forecast days, producing wrong fair prices for future dates.
+
+        Args:
+            weather_data: WeatherData with daily_stats in raw_data
+            target_date: ISO date string e.g. "2026-02-12"
+
+        Returns:
+            WeatherData with date-specific min/max/mean
+        """
+        from .clients.tomorrow_io import WeatherData as WD
+
+        if not weather_data.raw_data or "daily_stats" not in weather_data.raw_data:
+            return weather_data
+
+        daily_stats = weather_data.raw_data.get("daily_stats", {})
+        day_stats = daily_stats.get(target_date)
+
+        if not day_stats:
+            return weather_data  # No data for this specific date
+
+        def c_to_f(c: float) -> float:
+            return (c * 9.0 / 5.0) + 32.0
+
+        return WD(
+            location=weather_data.location,
+            fetched_at=weather_data.fetched_at,
+            current_temp=weather_data.current_temp,
+            feels_like=weather_data.feels_like,
+            temp_min=c_to_f(day_stats["min"]),
+            temp_max=c_to_f(day_stats["max"]),
+            temp_mean=c_to_f(day_stats["mean"]),
+            precipitation_probability=weather_data.precipitation_probability,
+            precipitation_amount=weather_data.precipitation_amount,
+            weather_code=weather_data.weather_code,
+            weather_description=weather_data.weather_description,
+            raw_data=weather_data.raw_data
+        )
+
     def _extract_target_date(self, question: str) -> tuple[str, int]:
         """
         Extract target date and days-to-resolution from market question.
@@ -830,24 +876,46 @@ class TradingBot:
 
             current = first_interval["values"]
 
-            # Calculate mean from available intervals
-            temps = [i["values"]["temperature"] for i in intervals if "values" in i and "temperature" in i["values"]]
-            temp_mins = [i["values"].get("temperatureMin", i["values"]["temperature"]) for i in intervals if "values" in i and "temperature" in i["values"]]
-            temp_maxs = [i["values"].get("temperatureMax", i["values"]["temperature"]) for i in intervals if "values" in i and "temperature" in i["values"]]
-
+            from collections import defaultdict
             from datetime import datetime
 
             # CRITICAL FIX: Tomorrow.io returns Celsius by default!
-            # All calculator logic uses Fahrenheit (sigma=3.5°F, thresholds in °F)
-            # Must convert here so everything is consistent
             def c_to_f(celsius: float) -> float:
                 return (celsius * 9.0 / 5.0) + 32.0
 
+            # Group hourly intervals by date (UTC) for per-day forecasts
+            # Without this, we use the OVERALL max across all days which is wrong
+            # e.g. Feb 10 max=12°C, Feb 12 max=8°C → old code used 12°C for both
+            temps_by_date = defaultdict(list)
+            for interval in intervals:
+                time_str = interval.get("time", "")
+                date_str = time_str[:10]  # "2026-02-10"
+                temp = interval.get("values", {}).get("temperature")
+                if temp is not None and date_str:
+                    temps_by_date[date_str].append(temp)
+
+            # Compute per-day stats (in Celsius)
+            daily_stats = {}
+            for date, temps in temps_by_date.items():
+                daily_stats[date] = {
+                    "min": min(temps),
+                    "max": max(temps),
+                    "mean": sum(temps) / len(temps),
+                }
+
+            if daily_stats:
+                logger.info(
+                    f"WEATHER DAILY (°C): " +
+                    " | ".join(f"{d}: hi={s['max']:.1f} lo={s['min']:.1f}" for d, s in sorted(daily_stats.items()))
+                )
+
+            # Overall stats (fallback)
+            all_temps = [t for temps in temps_by_date.values() for t in temps]
             raw_temp = current.get("temperature", 18.3)
             raw_feels = current.get("temperatureApparent", 18.3)
-            raw_min = min(temp_mins) if temp_mins else 15.0
-            raw_max = max(temp_maxs) if temp_maxs else 21.0
-            raw_mean = sum(temps) / len(temps) if temps else 18.3
+            raw_min = min(all_temps) if all_temps else 15.0
+            raw_max = max(all_temps) if all_temps else 21.0
+            raw_mean = sum(all_temps) / len(all_temps) if all_temps else 18.3
 
             logger.info(
                 f"WEATHER RAW (°C): temp={raw_temp:.1f} min={raw_min:.1f} "
@@ -855,7 +923,7 @@ class TradingBot:
             )
 
             return WeatherData(
-                location=(0, 0),  # Not needed for calculation
+                location=(0, 0),
                 fetched_at=datetime.now(),
                 current_temp=c_to_f(raw_temp),
                 feels_like=c_to_f(raw_feels),
@@ -866,7 +934,7 @@ class TradingBot:
                 precipitation_amount=current.get("precipitation"),
                 weather_code=current.get("weatherCode"),
                 weather_description=None,
-                raw_data=weather_data
+                raw_data={"original": weather_data, "daily_stats": daily_stats}
             )
         except Exception as e:
             logger.error(f"Error processing weather response: {e}")
