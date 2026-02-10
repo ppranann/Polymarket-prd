@@ -22,7 +22,7 @@ risk:
   max_trade_size: 3.00             # Increased to $3 for Reward eligibility
   max_trade_size_pct: 0.10         # 10% of current capital per trade (scales automatically)
   max_daily_loss: 4.50
-  max_open_positions: 3
+  max_open_positions: 50
   position_concentration: 0.20
   profit_target: 1.0
   # Priority 4: Risk Management
