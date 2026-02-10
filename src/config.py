@@ -264,7 +264,7 @@ class ConfigLoader:
                 lat=default_loc['lat'],
                 lon=default_loc['lon']
             ),
-            aws=config['aws'],
+            aws=config.get('aws', {}),
             risk=RiskConfig(
                 initial_capital=risk_cfg['initial_capital'],
                 max_trade_size=risk_cfg['max_trade_size'],

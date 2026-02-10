@@ -7,6 +7,10 @@ polymarket:
   api_key: ${POLYMARKET_API_KEY}
   clob_contract_address: "0x4b13c5378b5e7c8c2c2a8e7c3a4d9e2f1b5c8d3a"
 
+aws:
+  region: ${AWS_DEFAULT_REGION:-us-east-1}
+  secret_name: polymarket-bot/production
+
 tomorrow_io:
   api_key: ${TOMORROW_IO_API_KEY}
   base_url: https://api.tomorrow.io/v4
@@ -57,6 +61,7 @@ scanner:
 alpha:
   enabled: true
   threshold: 0.15                 # 15% edge is a solid signal
+  size_multiplier_max: 3.0
 
 logging:
   level: INFO
@@ -65,6 +70,8 @@ logging:
     url: ${SUPABASE_URL}
     key: ${SUPABASE_KEY}
     table_prefix: polymarket_
+  local:
+    directory: /app/logs
 
 # Priority 1: Cost Control
 execution:
@@ -97,3 +104,4 @@ health:
 development:
   dry_run: false
   paper_trading: true             # Keep simulated for the final Saturday test
+  log_all_requests: false
