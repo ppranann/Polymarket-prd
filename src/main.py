@@ -33,8 +33,9 @@ from .scanner import create_market_scanner, MarketScanner
 from .executor import create_order_executor, OrderExecutor
 from .alpha import create_alpha_detector, AlphaDetector
 from .auto_exit import create_auto_exit_manager, AutoExitManager
-from .logger import create_audit_logger, AuditLogger
+from .logger import create_audit_logger, AuditLogger, PredictionLog
 from .performance import create_performance_reporter, PerformanceReporter
+from .resolution import ResolutionTracker
 
 # Configure logging
 logging.basicConfig(
@@ -95,6 +96,8 @@ class TradingBot:
         self._auto_exit = None
         self._logger = None
         self._performance = None
+        self._resolution_tracker = None
+        self._traded_market_ids: set = set()
         
         # Bot state
         self._running = False
@@ -253,6 +256,9 @@ class TradingBot:
         )
         
         logger.info("Audit Logger initialized")
+
+        # Initialize Resolution Tracker
+        self._resolution_tracker = ResolutionTracker(self._logger)
         
         logger.info(
             f"Bot initialized in {'PAPER' if self.paper_trading else 'LIVE'} trading mode"
@@ -310,6 +316,14 @@ class TradingBot:
 
                 # Update stats
                 self._scan_count += 1
+
+                # Step 3.5: Check market resolutions every 10 scans
+                if self._scan_count % 10 == 0 and self._traded_market_ids:
+                    resolutions = await self._resolution_tracker.check_resolutions(
+                        list(self._traded_market_ids)
+                    )
+                    if resolutions:
+                        await self._resolution_tracker.update_predictions(resolutions)
 
                 # Step 4: Show P&L (compact after each scan, full every hour)
                 if self._performance.should_print_full_summary(interval_minutes=60):
@@ -535,6 +549,28 @@ class TradingBot:
             confidence=calculation.confidence
         )
 
+        # Log prediction for calibration (Phase 2)
+        target_date, days_out = self._extract_target_date(market.question)
+        prediction = PredictionLog(
+            market_id=market.id,
+            question_text=market.question[:200],
+            city=city_name,
+            target_date=target_date,
+            condition_type=calculation.condition_type,
+            threshold_f=calculation.expected_temp,
+            forecast_temp_f=calculation.forecast_temp,
+            sigma_used=calculation.sigma,
+            z_score=calculation.z_score,
+            days_to_resolution=days_out,
+            fair_price=calculation.fair_price,
+            market_price=current_price,
+            alpha=signal.alpha,
+            side=signal.action,
+            size=0.0,
+            capital_at_time=self._risk_manager._capital
+        )
+        await self._logger.log_prediction(prediction)
+
         # Step 5: Execute trade based on signal
         if signal.action in ["BUY", "SELL"]:
             logger.info(
@@ -566,6 +602,7 @@ class TradingBot:
 
             if result.success:
                 logger.info(f"Trade executed: {result.action} on {market.id[:8]}...")
+                self._traded_market_ids.add(market.id)
             else:
                 logger.warning(f"Trade failed: {result.reason}")
 
@@ -579,7 +616,7 @@ class TradingBot:
 
         # Return None on successful analysis (no weather failure)
         return None
-    
+
     async def _analyze_and_trade(
         self,
         market,
@@ -711,7 +748,37 @@ class TradingBot:
                     return city
         
         return "unknown"
-    
+
+    def _extract_target_date(self, question: str) -> tuple[str, int]:
+        """
+        Extract target date and days-to-resolution from market question.
+
+        E.g. "Highest temperature in London on February 12?" → ("2026-02-12", 2)
+
+        Returns:
+            Tuple of (date_string, days_to_resolution)
+        """
+        import re
+        month_map = {
+            "january": 1, "february": 2, "march": 3, "april": 4,
+            "may": 5, "june": 6, "july": 7, "august": 8,
+            "september": 9, "october": 10, "november": 11, "december": 12
+        }
+        match = re.search(r'on\s+(\w+)\s+(\d{1,2})', question, re.IGNORECASE)
+        if match:
+            month_name = match.group(1).lower()
+            day = int(match.group(2))
+            month = month_map.get(month_name)
+            if month:
+                year = datetime.now().year
+                try:
+                    target = datetime(year, month, day).date()
+                    days_out = (target - datetime.now().date()).days
+                    return target.isoformat(), max(0, days_out)
+                except ValueError:
+                    pass
+        return datetime.now().date().isoformat(), 0
+
     async def _process_weather_response(self, weather_data: Dict) -> Optional[Any]:
         """
         Process raw Tomorrow.io V4 API response into WeatherData object.

@@ -35,6 +35,7 @@ class RiskConfig:
     circuit_breaker_pnl_pct: float = 0.20  # Priority 4: 20% loss threshold
     circuit_breaker_window: int = 60  # Priority 4: minutes
     circuit_breaker_close_all: bool = False  # Priority 4
+    max_trade_size_pct: float = 0.10  # Percentage of capital per trade (compounding)
 
 
 @dataclass
@@ -276,7 +277,8 @@ class ConfigLoader:
                 max_daily_trades=risk_cfg.get('max_daily_trades', 200),
                 circuit_breaker_pnl_pct=risk_cfg.get('circuit_breaker_pnl_pct', 0.20),
                 circuit_breaker_window=risk_cfg.get('circuit_breaker_window', 60),
-                circuit_breaker_close_all=risk_cfg.get('circuit_breaker_close_all', False)
+                circuit_breaker_close_all=risk_cfg.get('circuit_breaker_close_all', False),
+                max_trade_size_pct=risk_cfg.get('max_trade_size_pct', 0.10)
             ),
             farming=FarmingConfig(
                 enabled=farming_cfg['enabled'],

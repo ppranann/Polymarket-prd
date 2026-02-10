@@ -65,8 +65,17 @@ class FairPriceCalculator:
     - default_expected_temp: Historical average temperature (default: 65°F)
     """
     
-    # Default sigma in Fahrenheit (3.5°F = 1.9°C)
+    # Default sigma in Fahrenheit (3.5°F = 1.9°C) - used as fallback
     DEFAULT_SIGMA_FAHRENHEIT = 3.5
+
+    # Dynamic sigma by forecast horizon (days out)
+    # Same-day forecasts are tight, further out = more uncertainty
+    SIGMA_BY_HORIZON = {
+        0: 2.0,   # Same-day: forecast is very accurate
+        1: 3.5,   # 1 day out: moderate uncertainty
+        2: 5.0,   # 2 days out: wider
+        3: 6.5,   # 3 days out: even wider
+    }
 
     # Default expected temperature (historical average)
     DEFAULT_EXPECTED_TEMP = 65.0
@@ -114,6 +123,41 @@ class FairPriceCalculator:
 
         # Pre-compute for performance
         self._normal_dist = stats.norm(loc=0, scale=1)
+
+    def get_dynamic_sigma(self, market_condition: str) -> float:
+        """
+        Calculate sigma based on forecast horizon extracted from the question.
+
+        Args:
+            market_condition: Market question (e.g. "Highest temperature in London on February 12?")
+
+        Returns:
+            Sigma in °F adjusted for forecast horizon
+        """
+        import re
+        from datetime import datetime
+
+        month_map = {
+            "january": 1, "february": 2, "march": 3, "april": 4,
+            "may": 5, "june": 6, "july": 7, "august": 8,
+            "september": 9, "october": 10, "november": 11, "december": 12
+        }
+        match = re.search(r'on\s+(\w+)\s+(\d{1,2})', market_condition, re.IGNORECASE)
+        if match:
+            month_name = match.group(1).lower()
+            day = int(match.group(2))
+            month = month_map.get(month_name)
+            if month:
+                try:
+                    year = datetime.now().year
+                    target = datetime(year, month, day).date()
+                    days_out = max(0, (target - datetime.now().date()).days)
+                    sigma = self.SIGMA_BY_HORIZON.get(days_out, 2.0 + days_out * 1.5)
+                    return sigma
+                except ValueError:
+                    pass
+
+        return self.sigma  # Fallback to default
 
     def _validate_price(self, price: float, context: str = "") -> Optional[float]:
         """
@@ -287,17 +331,22 @@ class FairPriceCalculator:
                 logger.warning(f"❌ Failed to extract threshold from: '{market_condition[:80]}' - using default {self.default_expected_temp}°F")
                 expected_temp = self.default_expected_temp
 
+        # Dynamic sigma based on forecast horizon
+        dynamic_sigma = self.get_dynamic_sigma(market_condition)
+
         # Parse condition type for logging
         cond_type = self._parse_condition_type(market_condition)
         logger.info(
             f"CALC: type={cond_type} | threshold={expected_temp:.1f}°F | "
-            f"forecast={relevant_temp:.1f}°F | question='{market_condition[:60]}'"
+            f"forecast={relevant_temp:.1f}°F | sigma={dynamic_sigma:.1f}°F | "
+            f"question='{market_condition[:60]}'"
         )
 
         return self.calculate_fair_price(
             market_condition=market_condition,
             forecasted_temp=relevant_temp,
             expected_temp=expected_temp,
+            sigma=dynamic_sigma,
             market_price=market_price
         )
     

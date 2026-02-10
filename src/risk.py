@@ -279,41 +279,52 @@ class RiskManager:
         self,
         base_size: float,
         alpha: float = 0.0,
-        max_multiplier: float = 3.0
+        max_multiplier: float = 3.0,
+        fair_price: float = 0.5,
+        market_price: float = 0.5
     ) -> float:
         """
-        Calculate position size based on alpha and risk parameters.
+        Calculate position size using Kelly criterion with capital scaling.
 
-        Uses percentage-based sizing that scales with capital growth.
+        Uses fractional Kelly (quarter-Kelly) for robustness, with
+        percentage-based sizing that scales with capital growth.
 
         Args:
-            base_size: Base position size (can be ignored if using percentage)
+            base_size: Base position size (fallback)
             alpha: Current alpha (underpricing percentage)
-            max_multiplier: Maximum size multiplier
+            max_multiplier: Maximum size multiplier (legacy, kept as cap)
+            fair_price: Our estimated probability
+            market_price: Current market price
 
         Returns:
             Adjusted position size
         """
-        # Calculate base size as percentage of current capital
-        max_trade_size_pct = getattr(self.risk, 'max_trade_size_pct', None)
-        if max_trade_size_pct and self.capital > 0:
-            # Use percentage-based sizing (scales with capital)
-            base_size_pct = self.capital * max_trade_size_pct
-        else:
-            # Fallback to fixed base_size if percentage not configured
-            base_size_pct = base_size
+        if alpha <= 0 or self._capital <= 0:
+            return 0.0
 
-        # Scale size based on alpha
-        if alpha > 0:
-            # Positive alpha: increase size
-            multiplier = 1 + min(alpha, 1.0) * (max_multiplier - 1)
-            size = base_size_pct * multiplier
+        # Kelly criterion: optimal fraction of bankroll
+        kelly_scale = 0.25  # Quarter-Kelly for robustness
+        if market_price > 0.01 and fair_price > market_price:
+            b = (1.0 / market_price) - 1.0  # Net odds
+            p = fair_price
+            q = 1.0 - p
+            kelly_fraction = max(0.0, (b * p - q) / b) * kelly_scale
         else:
-            # Negative or zero alpha: use base size
-            size = base_size_pct
+            kelly_fraction = 0.0
 
-        # Clamp to fixed max trade size (hard limit)
-        return min(size, self.risk.max_trade_size)
+        # Kelly bet size (fraction of total capital)
+        kelly_size = self._capital * kelly_fraction
+
+        # Also calculate percentage-based size as a floor
+        max_trade_size_pct = getattr(self.risk, 'max_trade_size_pct', 0.10)
+        pct_size = self._capital * max_trade_size_pct
+
+        # Use the larger of Kelly or percentage-based (ensures minimum bet)
+        size = max(kelly_size, pct_size * 0.5)
+
+        # Clamp to proportional cap (scales with capital, floor at config value)
+        cap = max(self.risk.max_trade_size, self._capital * 0.15)
+        return min(size, cap)
     
     def open_position(
         self,
@@ -420,6 +431,9 @@ class RiskManager:
         
         # Calculate realized PnL
         realized_pnl = position.unrealized_pnl
+
+        # Compound: feed realized P&L back into capital
+        self._capital += realized_pnl
 
         # Record P&L for circuit breaker (Priority 4: Risk Management)
         self._recent_pnl.append((datetime.now(), realized_pnl))

@@ -335,12 +335,14 @@ class OrderExecutor:
                     reason="Cannot sell: no position held"
                 )
 
-        # Calculate position size
+        # Calculate position size (Kelly + capital scaling)
         base_size = self.config.risk.max_trade_size
         size = self.risk.calculate_position_size(
             base_size=base_size,
             alpha=alpha,
-            max_multiplier=self.config.alpha.size_multiplier_max
+            max_multiplier=self.config.alpha.size_multiplier_max,
+            fair_price=fair_price,
+            market_price=current_price
         )
         
         # Check risk limits

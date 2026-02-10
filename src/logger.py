@@ -57,6 +57,58 @@ class AuditLog:
 
 
 @dataclass
+class PredictionLog:
+    """Structured prediction log for calibration and backtesting"""
+    market_id: str
+    question_text: str
+    city: str
+    target_date: str  # e.g. "2026-02-12"
+    condition_type: str  # above, below, range
+    threshold_f: float
+    forecast_temp_f: float
+    sigma_used: float
+    z_score: float
+    days_to_resolution: int
+    fair_price: float
+    market_price: float
+    alpha: float
+    side: str  # BUY, SELL, SKIP
+    size: float
+    capital_at_time: float
+    created_at: Optional[datetime] = None
+    # Filled in later by resolution tracker
+    resolved: bool = False
+    actual_outcome: Optional[int] = None  # 1 = YES won, 0 = NO won
+    resolved_at: Optional[datetime] = None
+    pnl_realized: Optional[float] = None
+
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for Supabase insertion"""
+        return {
+            "market_id": self.market_id,
+            "question_text": self.question_text,
+            "city": self.city,
+            "target_date": self.target_date,
+            "condition_type": self.condition_type,
+            "threshold_f": self.threshold_f,
+            "forecast_temp_f": self.forecast_temp_f,
+            "sigma_used": self.sigma_used,
+            "z_score": self.z_score,
+            "days_to_resolution": self.days_to_resolution,
+            "fair_price": self.fair_price,
+            "market_price": self.market_price,
+            "alpha": self.alpha,
+            "side": self.side,
+            "size": self.size,
+            "capital_at_time": self.capital_at_time,
+            "resolved": self.resolved,
+            "actual_outcome": self.actual_outcome,
+            "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
+            "pnl_realized": self.pnl_realized
+        }
+
+
+@dataclass
 class RewardLog:
     """Represents a liquidity reward log entry"""
     market_id: str
@@ -209,6 +261,35 @@ class AuditLogger:
         
         return None
     
+    async def log_prediction(self, prediction: PredictionLog) -> Optional[str]:
+        """
+        Log a structured prediction for calibration tracking.
+
+        Writes to polymarket_predictions table in Supabase.
+        """
+        if self._connected and self._client:
+            try:
+                response = (
+                    self._client
+                    .table(f"{self.table_prefix}predictions")
+                    .insert(prediction.to_dict())
+                    .execute()
+                )
+                if response.data:
+                    return response.data[0].get("id")
+            except Exception as e:
+                logger.debug(f"Failed to log prediction to Supabase: {e}")
+
+        # Always log to console for visibility
+        logger.info(
+            f"PREDICTION: {prediction.side} | {prediction.city} {prediction.target_date} | "
+            f"type={prediction.condition_type} | threshold={prediction.threshold_f:.1f}°F | "
+            f"forecast={prediction.forecast_temp_f:.1f}°F | sigma={prediction.sigma_used:.1f} | "
+            f"fair=${prediction.fair_price:.3f} vs market=${prediction.market_price:.3f} | "
+            f"alpha={prediction.alpha:.1%} | days_out={prediction.days_to_resolution}"
+        )
+        return None
+
     async def log_scan(
         self,
         markets_found: int,

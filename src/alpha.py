@@ -164,6 +164,43 @@ class AlphaDetector:
         
         return min(multiplier, max_mult)
     
+    def calculate_kelly_fraction(
+        self,
+        fair_price: float,
+        market_price: float,
+        kelly_scale: float = 0.25
+    ) -> float:
+        """
+        Calculate fractional Kelly criterion bet size as fraction of bankroll.
+
+        Kelly: f* = (b*p - q) / b
+        Where b = net odds, p = true probability, q = 1 - p
+
+        Args:
+            fair_price: Our estimated probability (p)
+            market_price: Market price (determines odds)
+            kelly_scale: Fraction of full Kelly to use (0.25 = quarter Kelly)
+
+        Returns:
+            Fraction of bankroll to bet (0.0 to ~0.15)
+        """
+        if market_price <= 0.01 or market_price >= 0.99:
+            return 0.0
+        if fair_price <= market_price:
+            return 0.0  # No edge, don't bet
+
+        b = (1.0 / market_price) - 1.0  # Net odds
+        p = fair_price
+        q = 1.0 - p
+
+        kelly = (b * p - q) / b
+
+        if kelly <= 0:
+            return 0.0
+
+        # Apply fractional Kelly for robustness
+        return kelly * kelly_scale
+
     def calculate_expected_return(
         self,
         fair_price: float,
