@@ -179,14 +179,15 @@ class FairPriceCalculator:
         z_score = (forecasted_temp - exp_temp) / sig
         
         # Calculate fair price using CDF
+        # Model: T ~ N(forecast, sigma²), z = (forecast - threshold) / sigma
+        # P(T > threshold) = Φ(z) = CDF(z)
+        # P(T < threshold) = 1 - Φ(z) = 1 - CDF(z)
         if condition_type == "above":
-            # For "above" conditions, higher temp = higher probability
-            # Fair price = P(T > threshold) = 1 - CDF(z)
-            fair_price = 1 - self._normal_dist.cdf(z_score)
-        elif condition_type == "below":
-            # For "below" conditions, lower temp = higher probability
-            # Fair price = P(T < threshold) = CDF(z)
+            # P(T > threshold): higher forecast → higher z → higher probability ✓
             fair_price = self._normal_dist.cdf(z_score)
+        elif condition_type == "below":
+            # P(T < threshold): lower forecast → more negative z → higher probability ✓
+            fair_price = 1 - self._normal_dist.cdf(z_score)
         elif condition_type == "precipitation":
             # For precipitation, use probability directly
             fair_price = min(forecasted_temp, 1.0) if forecasted_temp <= 1.0 else 0.5
@@ -307,7 +308,8 @@ class FairPriceCalculator:
         Polymarket question formats:
         - "13°C or higher" → above
         - "15°F or below" → below
-        - "-4°C" (standalone threshold) → above (default for "highest temp" questions)
+        - "-4°C" (standalone threshold, no direction) → range (single-degree bucket)
+        - "26-27°F" (explicit range) → range
 
         Args:
             condition: Market condition description
@@ -315,25 +317,35 @@ class FairPriceCalculator:
         Returns:
             Condition type: "above", "below", "precipitation", "range", or "other"
         """
+        import re
         condition_lower = condition.lower()
 
         # CRITICAL FIX: Polymarket uses "higher"/"lower", not just "above"/"below"
         above_keywords = ["above", "higher", "or more", "at least", "over", "gt"]
         below_keywords = ["below", "lower", "or less", "at most", "under", "lt"]
 
+        # Check explicit direction keywords FIRST (unambiguous)
         if any(kw in condition_lower for kw in above_keywords) or ">" in condition:
             return "above"
         elif any(kw in condition_lower for kw in below_keywords) or "<" in condition:
             return "below"
         elif any(word in condition_lower for word in ["rain", "precip", "snow", "storm"]):
             return "precipitation"
-        elif "between" in condition_lower or "range" in condition_lower:
+
+        # CRITICAL FIX: Detect range/bucket markets BEFORE "highest temperature" fallback
+        # "26-27°F", "30-34°F", etc. → explicit range
+        if re.search(r'-?\d+\s*[-–]\s*-?\d+', condition):
             return "range"
-        elif "highest temperature" in condition_lower:
-            # Default: "Highest temperature in Seoul? - -4°C" with no direction keyword
-            return "above"
-        else:
-            return "other"
+
+        # Bare number without direction keyword → single-degree bucket
+        # e.g. "Highest temperature in Seoul? - 4°C", "...? - -2°C", "...? - 10°C"
+        if re.search(r'\?\s*-\s*-?\d+\s*[°]?[CFcf]?\s*$', condition):
+            return "range"
+
+        if "between" in condition_lower or "range" in condition_lower:
+            return "range"
+
+        return "other"
     
     def _get_relevant_temperature(
         self,
@@ -342,24 +354,29 @@ class FairPriceCalculator:
     ) -> float:
         """
         Get the relevant temperature from WeatherData for the condition.
-        
+
+        CRITICAL: All "Highest temperature" questions use temp_max regardless
+        of whether the condition is above, below, or range. The question asks
+        about the daily HIGH, so the forecast HIGH is the right center.
+
         Args:
             weather_data: Weather data
             condition: Market condition
-            
+
         Returns:
             Temperature value to use for calculation
         """
+        # "Highest temperature" questions always use the forecast high
+        if "highest temperature" in condition.lower():
+            return weather_data.temp_max
+
         condition_type = self._parse_condition_type(condition)
-        
+
         if condition_type == "above":
-            # Use max temp for "above" conditions
             return weather_data.temp_max
         elif condition_type == "below":
-            # Use min temp for "below" conditions
             return weather_data.temp_min
         else:
-            # Use mean for other conditions
             return weather_data.temp_mean
     
     def _calculate_range_probability(
@@ -371,39 +388,80 @@ class FairPriceCalculator:
     ) -> float:
         """
         Calculate probability of temperature being in a range.
-        
+
+        Model: T ~ N(forecasted_temp, sigma²)
+        P(low ≤ T ≤ high) = Φ((high - forecast)/σ) - Φ((low - forecast)/σ)
+
+        Handles Polymarket formats:
+        - "26-27°F" → P(26 ≤ T ≤ 27)
+        - "10°C" (bare number) → P(10°C ≤ T < 11°C) = P(50°F ≤ T < 51.8°F)
+
         Args:
             condition: Range condition string
-            forecasted_temp: Forecasted temperature
-            expected_temp: Expected temperature
-            sigma: Standard deviation
-            
+            forecasted_temp: Forecasted temperature in °F (distribution center)
+            expected_temp: Extracted threshold (not used for range calc)
+            sigma: Standard deviation in °F
+
         Returns:
             Probability of temperature in range
         """
-        # Parse range from condition (simplified - would need more robust parsing)
         import re
-        
-        # Look for patterns like "between_60_and_70" or "60_to_70"
+
+        is_celsius = '°C' in condition or '°c' in condition
+
+        # Pattern 1: Explicit range "26-27°F", "30-34°F", "-2-0°C"
+        range_match = re.search(r'(-?\d+\.?\d*)\s*[-–]\s*(-?\d+\.?\d*)\s*[°]?[CFcf]?', condition)
+        if range_match:
+            low = float(range_match.group(1))
+            high = float(range_match.group(2))
+            if is_celsius:
+                low = low * 9.0 / 5.0 + 32.0
+                high = high * 9.0 / 5.0 + 32.0
+
+            z_low = (low - forecasted_temp) / sigma
+            z_high = (high - forecasted_temp) / sigma
+            prob = self._normal_dist.cdf(z_high) - self._normal_dist.cdf(z_low)
+            logger.debug(
+                f"Range {low:.0f}-{high:.0f}°F: z=[{z_low:.2f},{z_high:.2f}] "
+                f"P={prob:.4f} (forecast={forecasted_temp:.1f}°F)"
+            )
+            return max(prob, 0.001)
+
+        # Pattern 2: Bare number "? - 4°C" or "? - -2°C" → 1-degree bucket
+        bare_match = re.search(r'\?\s*-\s*(-?\d+\.?\d*)\s*[°]?[CFcf]?', condition)
+        if bare_match:
+            temp = float(bare_match.group(1))
+            if is_celsius:
+                low = temp * 9.0 / 5.0 + 32.0
+                high = (temp + 1) * 9.0 / 5.0 + 32.0  # 1°C bucket
+            else:
+                low = temp
+                high = temp + 1.0  # 1°F bucket
+
+            z_low = (low - forecasted_temp) / sigma
+            z_high = (high - forecasted_temp) / sigma
+            prob = self._normal_dist.cdf(z_high) - self._normal_dist.cdf(z_low)
+            logger.debug(
+                f"Bucket {low:.0f}-{high:.0f}°F: z=[{z_low:.2f},{z_high:.2f}] "
+                f"P={prob:.4f} (forecast={forecasted_temp:.1f}°F)"
+            )
+            return max(prob, 0.001)
+
+        # Fallback: old patterns
         patterns = [
-            r'between\s*(\d+\.?\d*)\s*and\s*(\d+\.?\d*)',
-            r'(\d+\.?\d*)\s*to\s*(\d+\.?\d*)',
-            r'range\s*(\d+\.?\d*)\s*-\s*(\d+\.?\d*)',
+            r'between\s*(-?\d+\.?\d*)\s*and\s*(-?\d+\.?\d*)',
+            r'(-?\d+\.?\d*)\s*to\s*(-?\d+\.?\d*)',
         ]
-        
         for pattern in patterns:
             match = re.search(pattern, condition.lower())
             if match:
                 low = float(match.group(1))
                 high = float(match.group(2))
-                
-                # Calculate probability using normal distribution
-                z_low = (low - expected_temp) / sigma
-                z_high = (high - expected_temp) / sigma
-                
-                return self._normal_dist.cdf(z_high) - self._normal_dist.cdf(z_low)
-        
-        # Default: return 0.5 if range parsing fails
+                z_low = (low - forecasted_temp) / sigma
+                z_high = (high - forecasted_temp) / sigma
+                return max(self._normal_dist.cdf(z_high) - self._normal_dist.cdf(z_low), 0.001)
+
+        logger.warning(f"Could not parse range from: '{condition[:60]}' — using fallback 0.5")
         return 0.5
     
     def _calculate_alpha(
