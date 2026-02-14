@@ -25,6 +25,8 @@ risk:
   initial_capital: 30.0
   max_trade_size: 3.00             # Increased to $3 for Reward eligibility
   max_trade_size_pct: 0.10         # 10% of current capital per trade (scales automatically)
+  kelly_scale: 0.15               # 15% Kelly (conservative; unlock 0.25 after calibration)
+  min_trade_size: 0.50            # Skip trades below $0.50 (prevents dust bets)
   max_daily_loss: 4.50
   max_open_positions: 20
   position_concentration: 0.20
@@ -60,8 +62,9 @@ scanner:
 
 alpha:
   enabled: true
-  threshold: 0.15                 # 15% edge is a solid signal
-  size_multiplier_max: 3.0
+  threshold: 0.10                 # Absolute alpha: 10-cent edge required
+  messy_middle_threshold: 0.15   # Wider no-trade zone for 0.3-0.7 fair prices
+  size_multiplier_max: 1.0       # Neutered: Kelly-only sizing
 
 logging:
   level: INFO

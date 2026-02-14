@@ -96,23 +96,21 @@ class AlphaDetector:
         market_price: float
     ) -> float:
         """
-        Calculate alpha (mispricing percentage).
-        
+        Calculate alpha (absolute mispricing in probability space).
+
+        Alpha = Fair Price - Market Price
+
         Args:
             fair_price: Calculated fair price
             market_price: Current market price
-            
+
         Returns:
-            Alpha as decimal (e.g., 0.20 = 20% underpriced)
+            Alpha as absolute difference (e.g., 0.10 = 10 cents underpriced)
         """
-        if market_price <= 0.01:
-            # Avoid division by very small numbers
-            return 0.0
-        
-        alpha = (fair_price - market_price) / market_price
-        
-        # Cap alpha at reasonable values (-1.0 to 1.0)
-        return max(-1.0, min(1.0, alpha))
+        alpha = fair_price - market_price
+
+        # Cap alpha at reasonable values
+        return max(-0.95, min(0.95, alpha))
     
     def calculate_alpha_ratio(
         self,
@@ -168,7 +166,8 @@ class AlphaDetector:
         self,
         fair_price: float,
         market_price: float,
-        kelly_scale: float = 0.25
+        kelly_scale: float = 0.15,
+        confidence: float = 1.0
     ) -> float:
         """
         Calculate fractional Kelly criterion bet size as fraction of bankroll.
@@ -176,10 +175,15 @@ class AlphaDetector:
         Kelly: f* = (b*p - q) / b
         Where b = net odds, p = true probability, q = 1 - p
 
+        Confidence acts as a multiplicative brake: when the model is
+        extrapolating (extreme z-scores), confidence drops and Kelly
+        fraction shrinks accordingly.
+
         Args:
             fair_price: Our estimated probability (p)
             market_price: Market price (determines odds)
-            kelly_scale: Fraction of full Kelly to use (0.25 = quarter Kelly)
+            kelly_scale: Fraction of full Kelly to use (0.15 = conservative)
+            confidence: Confidence level (0-1), scales Kelly fraction
 
         Returns:
             Fraction of bankroll to bet (0.0 to ~0.15)
@@ -198,8 +202,8 @@ class AlphaDetector:
         if kelly <= 0:
             return 0.0
 
-        # Apply fractional Kelly for robustness
-        return kelly * kelly_scale
+        # Apply fractional Kelly × confidence brake
+        return kelly * kelly_scale * confidence
 
     def calculate_expected_return(
         self,
@@ -208,18 +212,15 @@ class AlphaDetector:
     ) -> float:
         """
         Calculate expected return if price converges to fair value.
-        
+
         Args:
             fair_price: Calculated fair price
             market_price: Current market price
-            
+
         Returns:
-            Expected return as percentage
+            Expected return as absolute difference
         """
-        if market_price <= 0:
-            return 0.0
-        
-        return (fair_price - market_price) / market_price
+        return fair_price - market_price
     
     def is_buy_signal(
         self,
@@ -287,8 +288,13 @@ class AlphaDetector:
         # Calculate expected return
         expected_return = self.calculate_expected_return(fair_price, market_price)
         
-        # Determine action
-        if alpha > self.alpha_config.threshold:
+        # Messy middle: if fair price is between 0.3 and 0.7 and absolute
+        # alpha is below the wider threshold, force HOLD. These markets
+        # are genuinely uncertain and our edge is too thin to trust.
+        messy_threshold = self.alpha_config.messy_middle_threshold
+        if 0.3 < fair_price < 0.7 and abs(alpha) < messy_threshold:
+            action = "HOLD"
+        elif alpha > self.alpha_config.threshold:
             action = "BUY"
             self._buy_signals += 1
         elif alpha < -self.alpha_config.threshold:
@@ -302,19 +308,19 @@ class AlphaDetector:
         # Generate recommendation
         if action == "BUY":
             recommendation = (
-                f"Strong buy signal: Market is {float(alpha):.1%} underpriced. "
+                f"Strong buy signal: Market is ${float(alpha):.2f} underpriced. "
                 f"Fair price: ${fair_price:.4f}, Market: ${market_price:.4f}. "
-                f"Increase position by {multiplier:.1f}x"
+                f"Size multiplier: {multiplier:.1f}x"
             )
         elif action == "SELL":
             recommendation = (
-                f"Sell signal: Market is {abs(float(alpha)):.1%} overpriced. "
+                f"Sell signal: Market is ${abs(float(alpha)):.2f} overpriced. "
                 f"Fair price: ${fair_price:.4f}, Market: ${market_price:.4f}"
             )
         else:
             recommendation = (
                 f"Hold: Market is fairly priced. "
-                f"Difference: {float(alpha):.1%}"
+                f"Spread: ${float(alpha):.2f}"
             )
         
         signal = AlphaSignal(

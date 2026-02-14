@@ -36,6 +36,8 @@ class RiskConfig:
     circuit_breaker_window: int = 60  # Priority 4: minutes
     circuit_breaker_close_all: bool = False  # Priority 4
     max_trade_size_pct: float = 0.10  # Percentage of capital per trade (compounding)
+    kelly_scale: float = 0.25  # Fractional Kelly multiplier (0.15 = conservative)
+    min_trade_size: float = 0.50  # Skip trades below this dollar amount
 
 
 @dataclass
@@ -55,8 +57,9 @@ class FarmingConfig:
 class AlphaConfig:
     """Alpha snipe parameters"""
     enabled: bool
-    threshold: float
+    threshold: float  # Absolute alpha threshold (e.g. 0.10 = 10-cent edge)
     size_multiplier_max: float
+    messy_middle_threshold: float = 0.15  # Wider no-trade zone for mid-priced markets
 
 
 @dataclass
@@ -278,7 +281,9 @@ class ConfigLoader:
                 circuit_breaker_pnl_pct=risk_cfg.get('circuit_breaker_pnl_pct', 0.20),
                 circuit_breaker_window=risk_cfg.get('circuit_breaker_window', 60),
                 circuit_breaker_close_all=risk_cfg.get('circuit_breaker_close_all', False),
-                max_trade_size_pct=risk_cfg.get('max_trade_size_pct', 0.10)
+                max_trade_size_pct=risk_cfg.get('max_trade_size_pct', 0.10),
+                kelly_scale=risk_cfg.get('kelly_scale', 0.25),
+                min_trade_size=risk_cfg.get('min_trade_size', 0.50)
             ),
             farming=FarmingConfig(
                 enabled=farming_cfg['enabled'],
@@ -292,7 +297,8 @@ class ConfigLoader:
             alpha=AlphaConfig(
                 enabled=alpha_cfg['enabled'],
                 threshold=alpha_cfg['threshold'],
-                size_multiplier_max=alpha_cfg['size_multiplier_max']
+                size_multiplier_max=alpha_cfg['size_multiplier_max'],
+                messy_middle_threshold=alpha_cfg.get('messy_middle_threshold', 0.15)
             ),
             scanner=ScannerConfig(
                 scan_interval=scanner_cfg['scan_interval'],

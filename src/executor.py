@@ -289,7 +289,8 @@ class OrderExecutor:
         current_price: float,
         fair_price: float,
         alpha: float,
-        action: str = "BUY"
+        action: str = "BUY",
+        confidence: float = 1.0
     ) -> ExecutionResult:
         """
         Execute a trade based on market analysis.
@@ -298,8 +299,9 @@ class OrderExecutor:
             market: Market to trade
             current_price: Current market price
             fair_price: Calculated fair price
-            alpha: Calculated alpha (underpricing)
+            alpha: Calculated alpha (absolute mispricing)
             action: "BUY", "SELL", or "HOLD"
+            confidence: Confidence level (0-1), scales Kelly sizing
 
         Returns:
             ExecutionResult with order details
@@ -342,7 +344,8 @@ class OrderExecutor:
             alpha=alpha,
             max_multiplier=self.config.alpha.size_multiplier_max,
             fair_price=fair_price,
-            market_price=current_price
+            market_price=current_price,
+            confidence=confidence
         )
         
         # Check risk limits
@@ -360,7 +363,7 @@ class OrderExecutor:
         # use _place_order() which registers positions in the risk manager.
         # Farming places symmetric BUY+SELL but never calls risk.open_position(),
         # so positions were invisible (showed 0 positions for 2+ hours).
-        if action in ("BUY", "SELL") and abs(alpha) >= 0.15:
+        if action in ("BUY", "SELL") and abs(alpha) >= self.config.alpha.threshold:
             # Directional trade: strong alpha signal → take a position
             logger.info(
                 f"Directional {action} on {market.id[:8]} "

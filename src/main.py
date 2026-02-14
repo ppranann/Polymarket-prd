@@ -578,8 +578,8 @@ class TradingBot:
         if signal.action in ["BUY", "SELL"]:
             logger.info(
                 f"Alpha signal: {signal.action} | "
-                f"Alpha: {float(signal.alpha):.1%} | "
-                f"Multiplier: {signal.size_multiplier:.1f}x"
+                f"Alpha: ${float(signal.alpha):.2f} | "
+                f"Confidence: {calculation.confidence:.2f}"
             )
 
             result = await self._executor.execute_trade(
@@ -587,7 +587,8 @@ class TradingBot:
                 current_price=current_price,
                 fair_price=calculation.fair_price,
                 alpha=signal.alpha,
-                action=signal.action
+                action=signal.action,
+                confidence=calculation.confidence
             )
 
             self._trade_count += 1
@@ -686,20 +687,21 @@ class TradingBot:
         if signal.action in ["BUY", "SELL"]:
             logger.info(
                 f"Alpha signal: {signal.action} | "
-                f"Alpha: {float(signal.alpha):.1%} | "
-                f"Multiplier: {signal.size_multiplier:.1f}x"
+                f"Alpha: ${float(signal.alpha):.2f} | "
+                f"Confidence: {calculation.confidence:.2f}"
             )
-            
+
             result = await self._executor.execute_trade(
                 market=market,
                 current_price=current_price,
                 fair_price=calculation.fair_price,
                 alpha=signal.alpha,
-                action=signal.action
+                action=signal.action,
+                confidence=calculation.confidence
             )
-            
+
             self._trade_count += 1
-            
+
             # Log trade
             await self._logger.log_trade(
                 market_id=market.id,

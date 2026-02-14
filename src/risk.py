@@ -279,52 +279,54 @@ class RiskManager:
         self,
         base_size: float,
         alpha: float = 0.0,
-        max_multiplier: float = 3.0,
+        max_multiplier: float = 1.0,
         fair_price: float = 0.5,
-        market_price: float = 0.5
+        market_price: float = 0.5,
+        confidence: float = 1.0
     ) -> float:
         """
-        Calculate position size using Kelly criterion with capital scaling.
+        Calculate position size using Kelly criterion with confidence scaling.
 
-        Uses fractional Kelly (quarter-Kelly) for robustness, with
-        percentage-based sizing that scales with capital growth.
+        Uses fractional Kelly (configurable, default 15%) with confidence
+        as a multiplicative brake. No minimum floor — if Kelly says small,
+        bet small. Technical minimum of min_trade_size prevents dust trades.
 
         Args:
-            base_size: Base position size (fallback)
-            alpha: Current alpha (underpricing percentage)
-            max_multiplier: Maximum size multiplier (legacy, kept as cap)
+            base_size: Base position size (legacy, used as cap reference)
+            alpha: Current alpha (absolute mispricing)
+            max_multiplier: Unused (neutered to 1.0)
             fair_price: Our estimated probability
             market_price: Current market price
+            confidence: Confidence level (0-1), scales Kelly fraction
 
         Returns:
-            Adjusted position size
+            Adjusted position size, or 0.0 if below minimum
         """
         if alpha <= 0 or self._capital <= 0:
             return 0.0
 
         # Kelly criterion: optimal fraction of bankroll
-        kelly_scale = 0.25  # Quarter-Kelly for robustness
+        kelly_scale = getattr(self.risk, 'kelly_scale', 0.15)
+
         if market_price > 0.01 and fair_price > market_price:
             b = (1.0 / market_price) - 1.0  # Net odds
             p = fair_price
             q = 1.0 - p
-            kelly_fraction = max(0.0, (b * p - q) / b) * kelly_scale
+            kelly_fraction = max(0.0, (b * p - q) / b) * kelly_scale * confidence
         else:
             kelly_fraction = 0.0
 
         # Kelly bet size (fraction of total capital)
         kelly_size = self._capital * kelly_fraction
 
-        # Also calculate percentage-based size as a floor
-        max_trade_size_pct = getattr(self.risk, 'max_trade_size_pct', 0.10)
-        pct_size = self._capital * max_trade_size_pct
+        # Technical minimum: skip dust trades
+        min_trade = getattr(self.risk, 'min_trade_size', 0.50)
+        if kelly_size < min_trade:
+            return 0.0
 
-        # Use the larger of Kelly or percentage-based (ensures minimum bet)
-        size = max(kelly_size, pct_size * 0.5)
-
-        # Clamp to proportional cap (scales with capital, floor at config value)
+        # Cap at config max or 15% of capital
         cap = max(self.risk.max_trade_size, self._capital * 0.15)
-        return min(size, cap)
+        return min(kelly_size, cap)
     
     def open_position(
         self,
@@ -369,7 +371,7 @@ class RiskManager:
         stats.trades_count += 1
         stats.total_volume += size
 
-        logger.info(f"Opened position: {outcome} {size} @ ${price} on {market_id} (alpha={entry_alpha:.0%})")
+        logger.info(f"Opened position: {outcome} {size} @ ${price} on {market_id} (alpha=${entry_alpha:.2f})")
 
         return position
     

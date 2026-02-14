@@ -69,13 +69,16 @@ class FairPriceCalculator:
     DEFAULT_SIGMA_FAHRENHEIT = 3.5
 
     # Dynamic sigma by forecast horizon (days out)
-    # Same-day forecasts are tight, further out = more uncertainty
+    # Shifted up ~0.5°F for conservatism: "the world is noisier than a toy normal"
     SIGMA_BY_HORIZON = {
-        0: 2.0,   # Same-day: forecast is very accurate
+        0: 2.5,   # Same-day: tight but admits forecast error
         1: 3.5,   # 1 day out: moderate uncertainty
-        2: 5.0,   # 2 days out: wider
-        3: 6.5,   # 3 days out: even wider
+        2: 4.5,   # 2 days out: wider
+        3: 5.5,   # 3 days out: even wider
     }
+
+    # Extra sigma for range/bucket markets to fatten tails
+    RANGE_SIGMA_ADDON = 1.0
 
     # Default expected temperature (historical average)
     DEFAULT_EXPECTED_TEMP = 65.0
@@ -254,8 +257,8 @@ class FairPriceCalculator:
         else:
             fair_price = validated_price
 
-        # Clamp fair price to valid range
-        fair_price = np.clip(fair_price, self.MIN_PRICE, self.MAX_PRICE)
+        # Clamp fair price: never believe 98%+ (fat tails exist)
+        fair_price = np.clip(fair_price, self.MIN_PRICE, 0.98)
         
         # Calculate alpha: how under/overpriced is the market?
         alpha = self._calculate_alpha(fair_price, market_price)
@@ -456,6 +459,9 @@ class FairPriceCalculator:
         """
         import re
 
+        # Fat tails for range/bucket markets: widen sigma to avoid overconfidence
+        sigma = sigma + self.RANGE_SIGMA_ADDON
+
         is_celsius = '°C' in condition or '°c' in condition
 
         # Pattern 1: Explicit range "26-27°F", "30-34°F", "-2-0°C"
@@ -474,7 +480,7 @@ class FairPriceCalculator:
                 f"Range {low:.0f}-{high:.0f}°F: z=[{z_low:.2f},{z_high:.2f}] "
                 f"P={prob:.4f} (forecast={forecasted_temp:.1f}°F)"
             )
-            return max(prob, 0.001)
+            return min(max(prob, 0.001), 0.98)
 
         # Pattern 2: Bare number "? - 4°C" or "? - -2°C" → 1-degree bucket
         bare_match = re.search(r'\?\s*-\s*(-?\d+\.?\d*)\s*[°]?[CFcf]?', condition)
@@ -494,7 +500,7 @@ class FairPriceCalculator:
                 f"Bucket {low:.0f}-{high:.0f}°F: z=[{z_low:.2f},{z_high:.2f}] "
                 f"P={prob:.4f} (forecast={forecasted_temp:.1f}°F)"
             )
-            return max(prob, 0.001)
+            return min(max(prob, 0.001), 0.98)
 
         # Fallback: old patterns
         patterns = [
@@ -508,7 +514,7 @@ class FairPriceCalculator:
                 high = float(match.group(2))
                 z_low = (low - forecasted_temp) / sigma
                 z_high = (high - forecasted_temp) / sigma
-                return max(self._normal_dist.cdf(z_high) - self._normal_dist.cdf(z_low), 0.001)
+                return min(max(self._normal_dist.cdf(z_high) - self._normal_dist.cdf(z_low), 0.001), 0.98)
 
         logger.warning(f"Could not parse range from: '{condition[:60]}' — using fallback 0.5")
         return 0.5
@@ -519,68 +525,73 @@ class FairPriceCalculator:
         market_price: float
     ) -> float:
         """
-        Calculate alpha (mispricing percentage).
-        
-        Alpha = (Fair Price - Market Price) / Market Price
-        
+        Calculate alpha (absolute mispricing in probability space).
+
+        Alpha = Fair Price - Market Price
+
         Positive alpha means market is underpriced (buy signal)
         Negative alpha means market is overpriced (sell signal)
-        
+
         Args:
             fair_price: Calculated fair price
             market_price: Current market price
-            
+
         Returns:
-            Alpha as a decimal (e.g., 0.20 = 20% underpriced)
+            Alpha as absolute difference (e.g., 0.10 = 10 cents underpriced)
         """
-        if market_price <= 0.01:
-            # Avoid division by very small numbers
-            return 0.0
-        
-        alpha = (fair_price - market_price) / market_price
-        
+        alpha = fair_price - market_price
+
         # Cap alpha at reasonable values
-        return np.clip(alpha, -2.0, 2.0)
+        return np.clip(alpha, -0.95, 0.95)
     
     def _calculate_confidence(self, z_score: float) -> float:
         """
         Calculate confidence based on z-score distance from mean.
-        
+
+        Peaks around |z|~1.75 then DECREASES for extreme z-scores
+        (model extrapolation risk). Acts as a brake on Kelly sizing
+        when the normal-distribution assumption is least trustworthy.
+
+        Curve shape:
+            |z| = 0.0 -> ~0.65  (near threshold, uncertain)
+            |z| = 1.0 -> ~0.80
+            |z| = 1.75 -> ~0.92 (peak)
+            |z| = 3.0 -> ~0.77
+            |z| = 4.0 -> ~0.57  (extrapolation, low trust)
+
         Args:
             z_score: Standard deviations from expected value
-            
+
         Returns:
             Confidence level (0.0 to 1.0)
         """
-        # Confidence increases as we move away from mean (extreme predictions)
-        # But caps at high values
         abs_z = abs(z_score)
-        
-        if abs_z <= 1:
-            return 0.5 + (abs_z * 0.1)  # 0.5 to 0.6
-        elif abs_z <= 2:
-            return 0.6 + ((abs_z - 1) * 0.2)  # 0.6 to 0.8
-        elif abs_z <= 3:
-            return 0.8 + ((abs_z - 2) * 0.1)  # 0.8 to 0.9
-        else:
-            return 0.95  # Very confident for extreme z-scores
+
+        # Gaussian-like confidence: peaks at |z|~1.75, decays beyond
+        peak_z = 1.75
+        width = 1.2
+        max_boost = 0.42
+
+        confidence = 0.50 + max_boost * math.exp(-0.5 * ((abs_z - peak_z) / width) ** 2)
+
+        return min(confidence, 0.95)
     
     def _generate_recommendation(
         self,
         fair_price: float,
         market_price: float,
         alpha: float,
-        alpha_threshold: float = 0.20
+        alpha_threshold: float = 0.10
     ) -> str:
         """
         Generate trading recommendation based on alpha.
-        
+
         Args:
             fair_price: Calculated fair price
             market_price: Current market price
-            alpha: Calculated alpha
-            alpha_threshold: Minimum alpha for action
-            
+            alpha: Calculated alpha (absolute)
+            alpha_threshold: Minimum absolute alpha for action
+
         Returns:
             Recommendation: "BUY", "SELL", or "HOLD"
         """
@@ -615,7 +626,7 @@ class FairPriceCalculator:
         self,
         fair_price: float,
         market_price: float,
-        alpha_threshold: float = 0.15,
+        alpha_threshold: float = 0.10,
         snipe_price_threshold: float = 0.15
     ) -> bool:
         """
@@ -637,7 +648,7 @@ class FairPriceCalculator:
         self,
         fair_price: float,
         market_price: float,
-        threshold: float = 0.15
+        threshold: float = 0.10
     ) -> bool:
         """
         Check if a market is overpriced.

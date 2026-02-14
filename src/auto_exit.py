@@ -129,13 +129,13 @@ class AutoExitManager:
             
             # Check 2: RISK_EXIT - Market moved strongly against prediction
             # If we entered with high alpha confidence but position is losing
-            if position.entry_alpha > 0.30:  # We entered with high confidence
+            if position.entry_alpha > 0.15:  # High conviction entry (15+ cent edge)
                 if position.pnl_percentage < -15:  # But now down 15%+
                     signal = self._create_exit_signal(
                         position=position,
                         current_price=current_price,
                         exit_type="RISK_EXIT",
-                        reason=f"Risk exit: Entry alpha {position.entry_alpha:.0%} but position down {position.pnl_percentage:.1f}%"
+                        reason=f"Risk exit: Entry alpha ${position.entry_alpha:.2f} but position down {position.pnl_percentage:.1f}%"
                     )
                     exit_signals.append(signal)
                     continue
