@@ -312,7 +312,11 @@ class RiskManager:
             b = (1.0 / market_price) - 1.0  # Net odds
             p = fair_price
             q = 1.0 - p
-            kelly_fraction = max(0.0, (b * p - q) / b) * kelly_scale * confidence
+            # Confidence floor: never shrink below 60% of Kelly.
+            # Prevents double-damping on high-conviction bets where
+            # extreme z-scores reduce confidence but edge is real.
+            adjusted_confidence = max(0.6, confidence)
+            kelly_fraction = max(0.0, (b * p - q) / b) * kelly_scale * adjusted_confidence
         else:
             kelly_fraction = 0.0
 

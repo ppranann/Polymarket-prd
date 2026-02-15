@@ -337,6 +337,19 @@ class FairPriceCalculator:
         # Dynamic sigma based on forecast horizon
         dynamic_sigma = self.get_dynamic_sigma(market_condition)
 
+        # Widen sigma if Tomorrow.io's forecast spread is wider than our default.
+        # When temp_max - temp_min > 2*sigma, our normal model is overconfident.
+        if hasattr(weather_data, 'temp_max') and hasattr(weather_data, 'temp_min'):
+            forecast_spread_f = weather_data.temp_max - weather_data.temp_min
+            if forecast_spread_f > 0:
+                spread_sigma = forecast_spread_f / 2.0
+                if spread_sigma > dynamic_sigma:
+                    logger.info(
+                        f"Widening sigma: {dynamic_sigma:.1f}°F → {spread_sigma:.1f}°F "
+                        f"(forecast spread: {forecast_spread_f:.1f}°F)"
+                    )
+                    dynamic_sigma = spread_sigma
+
         # Parse condition type for logging
         cond_type = self._parse_condition_type(market_condition)
         logger.info(

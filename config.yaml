@@ -25,22 +25,22 @@ risk:
   initial_capital: 30.0
   max_trade_size: 3.00             # Increased to $3 for Reward eligibility
   max_trade_size_pct: 0.10         # 10% of current capital per trade (scales automatically)
-  kelly_scale: 0.15               # 15% Kelly (conservative; unlock 0.25 after calibration)
-  min_trade_size: 0.50            # Skip trades below $0.50 (prevents dust bets)
+  kelly_scale: 0.10               # 10% Kelly (safer per-trade, let volume compound)
+  min_trade_size: 0.25            # Lower floor to capture small edges on $30 capital
   max_daily_loss: 4.50
   max_open_positions: 20
   position_concentration: 0.20
   profit_target: 1.0
   # Priority 4: Risk Management
   max_exposure_per_market: 10.0    # Max $10 exposure per individual market
-  max_daily_trades: 200            # Daily trade limit to prevent over-trading
+  max_daily_trades: 50             # Fewer, higher-quality trades only
   circuit_breaker_pnl_pct: 0.20    # Trigger circuit breaker at 20% loss
   circuit_breaker_window: 60       # Within 60 minutes
   circuit_breaker_close_all: false # Don't auto-close positions on trigger
 
 scanner:
   scan_interval: 30
-  price_threshold: 0.85            # RAISE THIS to 0.85 so we can see all markets
+  price_threshold: 0.40            # Focus on cheaper, higher-EV markets
   categories:
     - weather
     - temperature
@@ -58,13 +58,13 @@ scanner:
     - Temperature
     - Rain
   weather_cache_ttl: 120  # 2 minutes - keep fresh for active trading
-  snipe_price_threshold: 0.80     # Match scanner for testing
+  snipe_price_threshold: 0.30     # Focus on cheap markets with real edge
 
 alpha:
   enabled: true
-  threshold: 0.10                 # Absolute alpha: 10-cent edge required
+  threshold: 0.05                 # Floor for dynamic threshold (code scales with price)
   messy_middle_threshold: 0.15   # Wider no-trade zone for 0.3-0.7 fair prices
-  size_multiplier_max: 1.0       # Neutered: Kelly-only sizing
+  size_multiplier_max: 2.0       # Re-enabled: scale up on strong alpha signals
 
 logging:
   level: INFO

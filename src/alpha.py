@@ -288,16 +288,21 @@ class AlphaDetector:
         # Calculate expected return
         expected_return = self.calculate_expected_return(fair_price, market_price)
         
+        # Dynamic threshold: scale with market price so cheap markets
+        # need less absolute edge (they have higher relative EV).
+        # Floor at config threshold (0.05), scales up for expensive markets.
+        effective_threshold = max(self.alpha_config.threshold, market_price * 0.25)
+
         # Messy middle: if fair price is between 0.3 and 0.7 and absolute
         # alpha is below the wider threshold, force HOLD. These markets
         # are genuinely uncertain and our edge is too thin to trust.
         messy_threshold = self.alpha_config.messy_middle_threshold
         if 0.3 < fair_price < 0.7 and abs(alpha) < messy_threshold:
             action = "HOLD"
-        elif alpha > self.alpha_config.threshold:
+        elif alpha > effective_threshold:
             action = "BUY"
             self._buy_signals += 1
-        elif alpha < -self.alpha_config.threshold:
+        elif alpha < -effective_threshold:
             action = "SELL"
             self._sell_signals += 1
         else:

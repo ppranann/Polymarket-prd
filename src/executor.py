@@ -329,7 +329,7 @@ class OrderExecutor:
         if action == "SELL":
             position = self.risk.get_position(market.id)
             if not position or position.size <= 0:
-                logger.warning(f"Cannot sell {market.id[:8]}: no position held")
+                logger.debug(f"Skipping sell {market.id[:8]}: no position held")
                 return ExecutionResult(
                     success=False,
                     order=None,
@@ -618,9 +618,9 @@ class OrderExecutor:
                     book_midpoint = (best_bid + best_ask) / 2
 
                     # SANITY CHECK: Only use orderbook midpoint if it's
-                    # within 3x of current price (prevents $0.51 midpoint
-                    # on a $0.04 market)
-                    if current_price > 0.01 and book_midpoint < current_price * 3:
+                    # within 1.5x of current price (prevents $0.51 midpoint
+                    # on a $0.04 market — tightened from 3x)
+                    if current_price > 0.01 and book_midpoint < current_price * 1.5:
                         self._midpoint_cache[market_id] = book_midpoint
                         return book_midpoint
                     else:

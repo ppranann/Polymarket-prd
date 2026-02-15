@@ -354,6 +354,10 @@ class TradingBot:
         # Reset skip reasons for this scan (Priority 5: Logging)
         self._skip_reasons = {}
 
+        # Per-scan trade budget: prevent burning through daily limit in one cycle
+        self._scan_trades_this_cycle = 0
+        self._scan_trade_budget = 5
+
         # Weather cache for this scan (temperature doesn't change every second!)
         weather_cache: Dict[str, Any] = {}
 
@@ -576,6 +580,12 @@ class TradingBot:
 
         # Step 5: Execute trade based on signal
         if signal.action in ["BUY", "SELL"]:
+            # Per-scan trade budget: don't burn through daily limit in one cycle
+            if getattr(self, '_scan_trades_this_cycle', 0) >= getattr(self, '_scan_trade_budget', 5):
+                logger.debug(f"Scan trade budget reached, deferring {market.id[:8]}")
+                self._record_skip_reason("scan_budget")
+                return
+
             logger.info(
                 f"Alpha signal: {signal.action} | "
                 f"Alpha: ${float(signal.alpha):.2f} | "
@@ -592,6 +602,7 @@ class TradingBot:
             )
 
             self._trade_count += 1
+            self._scan_trades_this_cycle = getattr(self, '_scan_trades_this_cycle', 0) + 1
 
             # Log trade
             await self._logger.log_trade(
