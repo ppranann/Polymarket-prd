@@ -308,7 +308,7 @@ class RiskManager:
         # Kelly criterion: optimal fraction of bankroll
         kelly_scale = getattr(self.risk, 'kelly_scale', 0.15)
 
-        if market_price > 0.01 and fair_price > market_price:
+        if market_price > 0.005 and fair_price > market_price:
             b = (1.0 / market_price) - 1.0  # Net odds
             p = fair_price
             q = 1.0 - p
@@ -322,11 +322,15 @@ class RiskManager:
         # Technical minimum: skip dust trades
         min_trade = getattr(self.risk, 'min_trade_size', 0.50)
         if kelly_size < min_trade:
+            logger.debug(
+                f"Kelly size ${kelly_size:.2f} < min ${min_trade:.2f} "
+                f"(kelly_frac={kelly_fraction:.4f}, scale={kelly_scale}, "
+                f"conf={confidence:.2f}, fair={fair_price:.4f}, mkt={market_price:.4f})"
+            )
             return 0.0
 
-        # Cap at config max or 15% of capital
-        cap = max(self.risk.max_trade_size, self._capital * 0.15)
-        return min(kelly_size, cap)
+        # Cap at config max_trade_size (must agree with can_open_position)
+        return min(kelly_size, self.risk.max_trade_size)
     
     def open_position(
         self,

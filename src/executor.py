@@ -347,7 +347,14 @@ class OrderExecutor:
             market_price=current_price,
             confidence=confidence
         )
-        
+
+        # Cap at max_trade_size (defensive: calculate_position_size should
+        # already do this, but ensure no over-sized orders reach risk checks)
+        max_size = self.config.risk.max_trade_size
+        if size > max_size:
+            logger.info(f"Capping position size from ${size:.2f} to ${max_size:.2f}")
+            size = max_size
+
         # Check risk limits
         can_trade, reason = self.risk.can_open_position(size, market.id)
         if not can_trade:

@@ -890,7 +890,8 @@ class TradingBot:
             # e.g. Feb 10 max=12°C, Feb 12 max=8°C → old code used 12°C for both
             temps_by_date = defaultdict(list)
             for interval in intervals:
-                time_str = interval.get("time", "")
+                # V4 /timelines uses "startTime", /weather/forecast uses "time"
+                time_str = interval.get("startTime") or interval.get("time", "")
                 date_str = time_str[:10]  # "2026-02-10"
                 temp = interval.get("values", {}).get("temperature")
                 if temp is not None and date_str:
