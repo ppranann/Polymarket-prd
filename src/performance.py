@@ -66,7 +66,7 @@ class PerformanceReporter:
         logger.info(f"{daily_emoji} Daily Realized P&L: ${daily:+.2f}")
 
         # Open positions detail
-        positions = self.risk.get_open_positions()
+        positions = self.risk.get_all_positions()
         if positions:
             logger.info("")
             logger.info("Open Positions:")
@@ -149,7 +149,7 @@ class PerformanceReporter:
 
     def get_best_trade(self) -> Position:
         """Get the best performing open position"""
-        positions = self.risk.get_open_positions()
+        positions = self.risk.get_all_positions()
         if not positions:
             return None
 
@@ -157,7 +157,7 @@ class PerformanceReporter:
 
     def get_worst_trade(self) -> Position:
         """Get the worst performing open position"""
-        positions = self.risk.get_open_positions()
+        positions = self.risk.get_all_positions()
         if not positions:
             return None
 

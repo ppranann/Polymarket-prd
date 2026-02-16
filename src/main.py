@@ -618,6 +618,8 @@ class TradingBot:
             if result.success:
                 logger.info(f"Trade executed: {result.action} on {market.id[:8]}...")
                 self._traded_market_ids.add(market.id)
+            elif "no position held" in result.reason:
+                logger.debug(f"Skipped sell: {result.reason}")
             else:
                 logger.warning(f"Trade failed: {result.reason}")
 
