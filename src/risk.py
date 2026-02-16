@@ -307,8 +307,11 @@ class RiskManager:
 
         # Kelly criterion: optimal fraction of bankroll
         kelly_scale = getattr(self.risk, 'kelly_scale', 0.15)
+        min_trade = getattr(self.risk, 'min_trade_size', 0.50)
 
-        if market_price > 0.005 and fair_price > market_price:
+        # Guard: prevent division by zero (lowered from 0.005 to allow
+        # very cheap weather markets that legitimately trade at $0.01)
+        if market_price > 0.001 and fair_price > market_price:
             b = (1.0 / market_price) - 1.0  # Net odds
             p = fair_price
             q = 1.0 - p
@@ -323,17 +326,30 @@ class RiskManager:
         # Kelly bet size (fraction of total capital)
         kelly_size = self._capital * kelly_fraction
 
-        # Technical minimum: skip dust trades
-        min_trade = getattr(self.risk, 'min_trade_size', 0.50)
+        # If Kelly is below minimum but we have strong alpha, use min_trade
+        # instead of skipping entirely. This lets us take small positions
+        # on cheap markets with big edges.
         if kelly_size < min_trade:
-            logger.debug(
-                f"Kelly size ${kelly_size:.2f} < min ${min_trade:.2f} "
-                f"(kelly_frac={kelly_fraction:.4f}, scale={kelly_scale}, "
+            if alpha >= 0.10 and fair_price > market_price and market_price > 0.001:
+                logger.info(
+                    f"Kelly ${kelly_size:.2f} < min ${min_trade:.2f}, "
+                    f"using min_trade (strong alpha={alpha:.2f}, "
+                    f"fair={fair_price:.4f}, mkt={market_price:.4f})"
+                )
+                return min_trade
+            logger.info(
+                f"Skipping: Kelly ${kelly_size:.4f} < min ${min_trade:.2f} "
+                f"(frac={kelly_fraction:.4f}, scale={kelly_scale}, "
                 f"conf={confidence:.2f}, fair={fair_price:.4f}, mkt={market_price:.4f})"
             )
             return 0.0
 
         # Cap at config max_trade_size (must agree with can_open_position)
+        logger.info(
+            f"Position size: ${min(kelly_size, self.risk.max_trade_size):.2f} "
+            f"(kelly=${kelly_size:.2f}, frac={kelly_fraction:.4f}, "
+            f"fair={fair_price:.4f}, mkt={market_price:.4f})"
+        )
         return min(kelly_size, self.risk.max_trade_size)
     
     def open_position(
