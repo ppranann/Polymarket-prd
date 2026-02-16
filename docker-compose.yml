@@ -14,7 +14,8 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - PYTHONPATH=/app
     volumes:
-      - ./config:/app/config:ro
+      # Config is baked into the image — no local override needed.
+      # Change config.yaml locally, commit, push, and redeploy.
       - ./logs:/app/logs
       - ~/.aws:/root/.aws:ro
     restart: unless-stopped
