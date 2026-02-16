@@ -580,6 +580,15 @@ class TradingBot:
 
         # Step 5: Execute trade based on signal
         if signal.action in ["BUY", "SELL"]:
+            # Skip SELL signals early if we have no position — don't waste
+            # scan budget or API calls on trades that will always fail
+            if signal.action == "SELL":
+                position = self._risk_manager.get_position(market.id)
+                if not position or position.size <= 0:
+                    logger.debug(f"Skipping sell {market.id[:8]}: no position held")
+                    self._record_skip_reason("no_position_sell")
+                    return
+
             # Per-scan trade budget: don't burn through daily limit in one cycle
             if getattr(self, '_scan_trades_this_cycle', 0) >= getattr(self, '_scan_trade_budget', 5):
                 logger.debug(f"Scan trade budget reached, deferring {market.id[:8]}")
@@ -601,8 +610,10 @@ class TradingBot:
                 confidence=calculation.confidence
             )
 
+            # Only count successful trades toward scan budget
             self._trade_count += 1
-            self._scan_trades_this_cycle = getattr(self, '_scan_trades_this_cycle', 0) + 1
+            if result.success:
+                self._scan_trades_this_cycle = getattr(self, '_scan_trades_this_cycle', 0) + 1
 
             # Log trade
             await self._logger.log_trade(
@@ -618,8 +629,6 @@ class TradingBot:
             if result.success:
                 logger.info(f"Trade executed: {result.action} on {market.id[:8]}...")
                 self._traded_market_ids.add(market.id)
-            elif "no position held" in result.reason:
-                logger.debug(f"Skipped sell: {result.reason}")
             else:
                 logger.warning(f"Trade failed: {result.reason}")
 
