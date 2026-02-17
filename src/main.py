@@ -555,7 +555,7 @@ class TradingBot:
                 f"Alpha signal: {signal.action} {signal.market_type} | "
                 f"Alpha: ${float(signal.alpha):.2f} | "
                 f"P_model: {signal.p_model:.3f} | "
-                f"P_implied: {signal.p_implied:.3f if signal.p_implied else 'N/A'} | "
+                f"P_implied: {f'{signal.p_implied:.3f}' if signal.p_implied is not None else 'N/A'} | "
                 f"Market: ${current_price:.4f} | "
                 f"{group.event_key}"
             )
