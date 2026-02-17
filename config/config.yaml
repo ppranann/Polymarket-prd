@@ -82,8 +82,8 @@ scanner:
 # Alpha Snipe Parameters
 alpha:
   enabled: true
-  threshold: 0.20                 # 20% undervaluation = alpha signal
-  size_multiplier_max: 3.0        # Max 3x position size increase
+  threshold: 0.08                 # 8% edge threshold (lowered: now only above/below markets)
+  size_multiplier_max: 2.0        # Max 2x position size increase
 
 # Logging and Monitoring
 logging:

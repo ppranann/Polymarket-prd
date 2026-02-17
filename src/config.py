@@ -67,16 +67,18 @@ class ScannerConfig:
     # Basic Thresholds
     price_threshold: float = 0.85
     snipe_price_threshold: float = 0.85
+    min_price: float = 0.02              # Skip markets below this (no liquidity)
+    skip_range_markets: bool = True       # Only trade above/below, not range buckets
 
     # Timing (5-minute heartbeat for Tomorrow.io free tier)
     scan_interval: int = 300
     weather_cache_ttl: int = 900
     min_weather_update_interval: int = 300
-    
+
     # Lists (Using default_factory for safety)
     categories: list = field(default_factory=lambda: ['weather', 'temperature', 'global', 'science'])
     keywords: list = field(default_factory=lambda: ['Seoul', 'London', 'Incheon', 'Heathrow'])
-    
+
     # Dictionaries
     filters: dict = field(default_factory=lambda: {"active": True, "liquidity_rewards_only": False})
 

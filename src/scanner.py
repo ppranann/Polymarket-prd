@@ -432,7 +432,25 @@ class MarketScanner:
         if market.yes_price >= threshold:
             logger.debug(f"Skipping {market.id[:8]} - price ${market.yes_price:.4f} >= ${threshold:.4f}")
             return False
-        
+
+        # Minimum price floor: skip markets with no real liquidity
+        min_price = getattr(self.scanner_config, 'min_price', 0.02)
+        if market.yes_price < min_price:
+            logger.debug(f"Skipping {market.id[:8]} - price ${market.yes_price:.4f} below min ${min_price}")
+            return False
+
+        # Only trade above/below markets — range buckets have tiny edges
+        # and near-zero liquidity on Polymarket weather markets
+        skip_range = getattr(self.scanner_config, 'skip_range_markets', True)
+        if skip_range:
+            q_lower = market.question.lower()
+            above_kw = ["higher", "above", "or more", "at least", "over"]
+            below_kw = ["lower", "below", "or less", "at most", "under"]
+            is_directional = any(kw in q_lower for kw in above_kw + below_kw)
+            if not is_directional:
+                logger.debug(f"Skipping {market.id[:8]} - range/bucket market: {market.question[:50]}")
+                return False
+
         # Must have Liquidity Rewards if required
         if require_rewards and not market.liquidity_rewards_enabled:
             logger.debug(f"Skipping {market.id[:8]} - no liquidity rewards")

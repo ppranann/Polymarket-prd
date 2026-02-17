@@ -244,8 +244,10 @@ class FairPriceCalculator:
                 market_condition, forecasted_temp, exp_temp, sig
             )
         else:
-            # Default: use midpoint with small adjustment
-            fair_price = 0.5
+            # Unparseable condition: assume no edge, set fair = market price
+            # (was 0.5, which created false $0.47 BUY signals on $0.03 markets)
+            logger.warning(f"Unknown condition type '{condition_type}' for: {market_condition[:60]}")
+            fair_price = market_price
             z_score = 0
 
         # Validate price before clamping (Priority 0: Critical Safety)

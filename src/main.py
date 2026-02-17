@@ -510,6 +510,12 @@ class TradingBot:
             self._record_skip_reason("risk_filter")
             return
 
+        # Early exit: if we hold no positions, expensive markets are SELL-only
+        # territory — skip them entirely to save weather API calls
+        if not self._risk_manager.positions and current_price > self.config.scanner.price_threshold:
+            self._record_skip_reason("overpriced_no_positions")
+            return
+
         # Step 2: Get city name
         city_name = self._extract_city_from_market(market)
 
