@@ -8,12 +8,16 @@ Detects and acts on market mispricings (alpha):
 """
 
 import logging
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 from .config import BotConfig
 from .calculator import FairPriceCalculator, PriceCalculation
 from .clients.tomorrow_io import WeatherData
+from .utils import (
+    classify_market_type, parse_bucket_range, is_celsius_market, c_to_f,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +35,15 @@ class AlphaSignal:
     size_multiplier: float
     expected_return: float
     recommendation: str
-    
+    # New fields for cross-market analysis
+    market_type: str = "threshold"  # "threshold" or "max_temp"
+    p_model: float = 0.0           # Model probability for this outcome
+    p_implied: Optional[float] = None  # Implied probability from other market type
+    distribution_mu: float = 0.0   # Distribution mean (°F)
+    distribution_sigma: float = 0.0  # Distribution sigma (°F)
+    bucket_range: Optional[str] = None  # e.g. "11-15" for bucket markets
+    event_key: str = ""  # city+date key
+
     def to_dict(self) -> Dict:
         """Convert to dictionary"""
         return {
@@ -44,7 +56,14 @@ class AlphaSignal:
             "action": self.action,
             "size_multiplier": self.size_multiplier,
             "expected_return": self.expected_return,
-            "recommendation": self.recommendation
+            "recommendation": self.recommendation,
+            "market_type": self.market_type,
+            "p_model": self.p_model,
+            "p_implied": self.p_implied,
+            "distribution_mu": self.distribution_mu,
+            "distribution_sigma": self.distribution_sigma,
+            "bucket_range": self.bucket_range,
+            "event_key": self.event_key,
         }
 
 
@@ -379,6 +398,214 @@ class AlphaDetector:
             confidence=calculation.confidence
         )
     
+    def analyze_market_group(
+        self,
+        group,  # MarketGroup from scanner
+        mu: float,
+        sigma: float,
+        prices: Dict[str, float],
+    ) -> List[AlphaSignal]:
+        """
+        Analyze all markets in a city+date group using a shared distribution.
+
+        Produces signals for both threshold and bucket markets, using
+        cross-market implied probabilities for sanity checking.
+
+        Args:
+            group: MarketGroup with threshold_markets and bucket_markets
+            mu: Distribution mean in °F
+            sigma: Distribution sigma in °F
+            prices: Dict of market_id → current YES price
+
+        Returns:
+            List of AlphaSignal for markets worth trading
+        """
+        signals: List[AlphaSignal] = []
+        bucket_threshold = getattr(self.alpha_config, 'bucket_threshold', 0.10)
+
+        # --- Step 1: Compute model probabilities for bucket markets ---
+        bucket_info: List[Dict] = []  # [{market, low_f, high_f, p_model, price}]
+        for market in group.bucket_markets:
+            low, high = parse_bucket_range(market.question)
+            # Convert to Fahrenheit if needed
+            if is_celsius_market(market.question):
+                low_f = c_to_f(low) if low != float('-inf') else float('-inf')
+                high_f = c_to_f(high) if high != float('inf') else float('inf')
+            else:
+                low_f = low
+                high_f = high
+
+            bucket_probs = self.calculator.calculate_bucket_probabilities(
+                mu, sigma, [(low_f, high_f)]
+            )
+            p_model = bucket_probs[0]
+            price = prices.get(market.id, market.yes_price)
+
+            bucket_info.append({
+                "market": market,
+                "low_f": low_f,
+                "high_f": high_f,
+                "p_model": p_model,
+                "price": price,
+                "range_str": f"{low}-{high}",
+            })
+
+        # --- Step 2: For threshold markets, compute model prob + implied from buckets ---
+        for market in group.threshold_markets:
+            price = prices.get(market.id, market.yes_price)
+            cond_type = self.calculator._parse_condition_type(market.question)
+            threshold_f = self.calculator.get_temperature_threshold_from_condition(
+                market.question
+            )
+
+            if threshold_f is None:
+                logger.warning(f"Cannot extract threshold from: {market.question[:60]}")
+                continue
+
+            # Model probability from shared distribution
+            p_model = self.calculator.calculate_threshold_probability(
+                mu, sigma, threshold_f, cond_type
+            )
+
+            # Implied probability from bucket markets
+            p_implied = self._implied_threshold_from_buckets(
+                threshold_f, cond_type, bucket_info
+            )
+
+            # Cross-check: skip if model and bucket-implied strongly disagree
+            cross_check_ok = True
+            if p_implied is not None and len(bucket_info) >= 3:
+                model_says_buy = (p_model > price)
+                implied_says_buy = (p_implied > price)
+                if model_says_buy != implied_says_buy:
+                    logger.info(
+                        f"Cross-check CONFLICT for {market.id[:8]}: "
+                        f"P_model={p_model:.3f} vs P_implied={p_implied:.3f} vs P_market={price:.3f}"
+                    )
+                    cross_check_ok = False
+
+            alpha = p_model - price
+            z = (threshold_f - mu) / sigma if sigma > 0 else 0
+            confidence = self.calculator._calculate_confidence(z)
+
+            # Generate signal using existing logic
+            signal = self.analyze_market(
+                market_id=market.id,
+                fair_price=p_model,
+                market_price=price,
+                z_score=z,
+                confidence=confidence,
+            )
+
+            # Override with cross-market metadata
+            signal.market_type = "threshold"
+            signal.p_model = p_model
+            signal.p_implied = p_implied
+            signal.distribution_mu = mu
+            signal.distribution_sigma = sigma
+            signal.event_key = group.event_key
+
+            # Downgrade to HOLD if cross-check failed
+            if not cross_check_ok and signal.action == "BUY":
+                signal.action = "HOLD"
+                signal.recommendation = (
+                    f"HOLD: cross-check conflict (model={p_model:.3f}, "
+                    f"implied={p_implied:.3f}, market={price:.3f})"
+                )
+
+            signals.append(signal)
+
+        # --- Step 3: For bucket markets, find most underpriced ---
+        best_bucket_signal = None
+        best_bucket_ev = 0.0
+
+        for info in bucket_info:
+            market = info["market"]
+            p_model = info["p_model"]
+            price = info["price"]
+            ev = p_model - price
+
+            if ev <= bucket_threshold:
+                continue
+
+            if ev > best_bucket_ev:
+                best_bucket_ev = ev
+                z = 0.0  # No single z-score for bucket
+                confidence = min(0.8, 0.5 + ev)  # Simple confidence proxy
+
+                signal = self.analyze_market(
+                    market_id=market.id,
+                    fair_price=p_model,
+                    market_price=price,
+                    z_score=z,
+                    confidence=confidence,
+                )
+                signal.market_type = "max_temp"
+                signal.p_model = p_model
+                signal.distribution_mu = mu
+                signal.distribution_sigma = sigma
+                signal.bucket_range = info["range_str"]
+                signal.event_key = group.event_key
+                best_bucket_signal = signal
+
+        # Only trade the single best bucket (small bankroll)
+        if best_bucket_signal and best_bucket_signal.action == "BUY":
+            signals.append(best_bucket_signal)
+
+        return signals
+
+    def _implied_threshold_from_buckets(
+        self,
+        threshold_f: float,
+        direction: str,
+        bucket_info: List[Dict],
+    ) -> Optional[float]:
+        """
+        Derive P(T >= threshold) or P(T <= threshold) from bucket market prices.
+
+        For "above" (T >= threshold): sum prices of all buckets whose range
+        overlaps with T >= threshold.
+
+        Args:
+            threshold_f: Temperature threshold in °F
+            direction: "above" or "below"
+            bucket_info: List of bucket dicts with low_f, high_f, price
+
+        Returns:
+            Implied probability, or None if insufficient bucket data
+        """
+        if len(bucket_info) < 2:
+            return None
+
+        p_implied = 0.0
+        for info in bucket_info:
+            low_f = info["low_f"]
+            high_f = info["high_f"]
+            price = info["price"]
+
+            if direction == "above":
+                # Bucket fully above threshold → add full price
+                if low_f >= threshold_f:
+                    p_implied += price
+                # Bucket partially overlaps → add proportional share
+                elif high_f > threshold_f and low_f < threshold_f:
+                    if high_f != float('inf') and low_f != float('-inf'):
+                        overlap = (high_f - threshold_f) / (high_f - low_f)
+                        p_implied += price * overlap
+                    else:
+                        p_implied += price * 0.5  # rough estimate
+            else:  # below
+                if high_f <= threshold_f:
+                    p_implied += price
+                elif low_f < threshold_f and high_f > threshold_f:
+                    if high_f != float('inf') and low_f != float('-inf'):
+                        overlap = (threshold_f - low_f) / (high_f - low_f)
+                        p_implied += price * overlap
+                    else:
+                        p_implied += price * 0.5
+
+        return min(p_implied, 1.0)
+
     def get_action_size(
         self,
         base_size: float,

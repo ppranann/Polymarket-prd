@@ -29,13 +29,14 @@ from .clients.polymarket import create_polymarket_client, PolymarketClient
 from .clients.tomorrow_client import create_tomorrow_client, RateLimitConfig
 from .calculator import create_calculator, FairPriceCalculator
 from .risk import create_risk_manager, RiskManager
-from .scanner import create_market_scanner, MarketScanner
+from .scanner import create_market_scanner, MarketScanner, MarketGroup
 from .executor import create_order_executor, OrderExecutor
 from .alpha import create_alpha_detector, AlphaDetector
 from .auto_exit import create_auto_exit_manager, AutoExitManager
 from .logger import create_audit_logger, AuditLogger, PredictionLog
 from .performance import create_performance_reporter, PerformanceReporter
 from .resolution import ResolutionTracker
+from .utils import extract_city, extract_target_date, make_event_key, classify_market_type
 
 # Configure logging
 logging.basicConfig(
@@ -389,34 +390,31 @@ class TradingBot:
             # Step 2: Get current prices using get_price (not get_book)
             prices = await self._scanner.get_market_prices(result.qualifying_markets)
 
-            # Step 3: Group markets by city to avoid duplicate API calls
-            markets_by_city: Dict[str, List] = {}
-            for m in result.qualifying_markets:
-                city = self._extract_city_from_market(m).lower()
-                markets_by_city.setdefault(city, []).append(m)
+            # Step 4: Group markets by city+date event
+            market_groups = self._scanner.group_markets_by_event(
+                result.qualifying_markets
+            )
 
-            # Step 4: Process city by city with rate-limit handling
+            # Step 5: Process each market group with shared weather + distribution
             skipped_cities = []
-            for city, city_markets in markets_by_city.items():
-                logger.info(f"☁️ Fetching weather: {city} ({len(city_markets)} markets)")
+            for group in market_groups:
+                city = group.city
 
                 # Check if city is in cooldown from previous attempts
                 if self._weather_client._is_city_rate_limited(city):
-                    logger.warning(f"⏱️ Skipping {city} - still in cooldown from previous rate limit.")
+                    logger.warning(f"Skipping {city} - still in cooldown from previous rate limit.")
                     skipped_cities.append(city)
                     continue
 
                 # Check scan-level cache first
                 if city in weather_cache:
-                    logger.debug(f"Using cached weather for {city}")
                     weather_data = weather_cache[city]
                 else:
-                    # Get location coordinates for this city from the client's COORD_MAP
-                    location = self._weather_client.COORD_MAP.get(city, self._weather_client.COORD_MAP["nyc"])
+                    # Get location coordinates for this city
+                    location = self._weather_client.COORD_MAP.get(
+                        city, self._weather_client.COORD_MAP["nyc"]
+                    )
 
-                    # Fetch weather using rate-limit aware client
-                    # NOTE: "precipitation" field is NOT valid for /timelines endpoint
-                    # Using only safe fields to avoid 400 errors
                     weather_raw = await self._weather_client.get_city_weather(
                         city_slug=city,
                         location=location,
@@ -427,45 +425,38 @@ class TradingBot:
                             "temperatureMax",
                             "precipitationProbability",
                             "weatherCode"
-                        ],  # REMOVED: "precipitation" (invalid field)
+                        ],
                         timesteps="1h",
                     )
 
                     if not weather_raw:
-                        logger.warning(f"❌ Skipping {city} - weather data unavailable (rate-limited or failed).")
+                        logger.warning(f"Skipping {city} - weather data unavailable.")
                         skipped_cities.append(city)
                         continue
 
-                    # Process weather response
                     weather_data = await self._process_weather_response(weather_raw)
 
                     if not weather_data:
-                        logger.warning(f"❌ Skipping {city} - could not parse weather data.")
+                        logger.warning(f"Skipping {city} - could not parse weather data.")
                         skipped_cities.append(city)
                         continue
 
-                    # Cache for this scan
                     weather_cache[city] = weather_data
 
-                # Step 5: Analyze ALL markets for THIS city using the single fetch
-                for market in city_markets:
-                    try:
-                        current_price = prices.get(market.id, market.yes_price)
-
-                        # Skip individual analyzing log - we already logged city group
-                        await self._analyze_single_market(
-                            market=market,
-                            current_price=current_price,
-                            weather_data=weather_data
-                        )
-
-                    except Exception as e:
-                        logger.error(f"Error on {market.id}: {e}")
-                        await self._logger.log_error(
-                            error_type="MARKET_ANALYSIS_ERROR",
-                            error_message=str(e),
-                            market_id=market.id
-                        )
+                # Analyze the entire market group using cross-market alpha
+                try:
+                    await self._analyze_market_group(
+                        group=group,
+                        weather_data=weather_data,
+                        prices=prices,
+                    )
+                except Exception as e:
+                    logger.error(f"Error analyzing group {group.event_key}: {e}")
+                    await self._logger.log_error(
+                        error_type="GROUP_ANALYSIS_ERROR",
+                        error_message=str(e),
+                        context={"event_key": group.event_key}
+                    )
 
             # Log summary
             if skipped_cities:
@@ -482,6 +473,152 @@ class TradingBot:
                 error_message=str(e)
             )
     
+    async def _analyze_market_group(
+        self,
+        group: MarketGroup,
+        weather_data,
+        prices: Dict[str, float],
+    ) -> None:
+        """
+        Analyze all markets in a city+date group using shared distribution
+        and cross-market alpha signals.
+
+        Args:
+            group: MarketGroup with threshold and bucket markets
+            weather_data: Pre-fetched WeatherData for the city
+            prices: Dict of market_id → current price
+        """
+        import math
+
+        # Get date-specific weather
+        date_weather = self._get_weather_for_date(weather_data, group.date)
+
+        # Compute lead time in hours
+        _, days_out = extract_target_date(
+            group.all_markets[0].question if group.all_markets else ""
+        )
+        lead_hours = days_out * 24
+
+        # Get shared distribution (mu, sigma) in Fahrenheit
+        forecast_spread_f = date_weather.temp_max - date_weather.temp_min
+        mu, sigma = self._calculator.get_distribution(
+            forecast_max_temp_f=date_weather.temp_max,
+            lead_hours=lead_hours,
+            forecast_spread_f=forecast_spread_f,
+        )
+
+        logger.info(
+            f"Distribution for {group.event_key}: "
+            f"mu={mu:.1f}°F, sigma={sigma:.1f}°F "
+            f"(forecast_max={date_weather.temp_max:.1f}°F, lead={lead_hours}h, "
+            f"{len(group.threshold_markets)} threshold, {len(group.bucket_markets)} bucket)"
+        )
+
+        # Get cross-market alpha signals
+        signals = self._alpha_detector.analyze_market_group(
+            group=group,
+            mu=mu,
+            sigma=sigma,
+            prices=prices,
+        )
+
+        # Execute trades for actionable signals
+        for signal in signals:
+            if signal.action not in ("BUY", "SELL"):
+                self._record_skip_reason("no_alpha")
+                continue
+
+            market = None
+            for m in group.all_markets:
+                if m.id == signal.market_id:
+                    market = m
+                    break
+
+            if not market:
+                continue
+
+            # Skip SELL signals without position
+            if signal.action == "SELL":
+                position = self._risk_manager.get_position(market.id)
+                if not position or position.size <= 0:
+                    self._record_skip_reason("no_position_sell")
+                    continue
+
+            # Per-scan trade budget
+            if getattr(self, '_scan_trades_this_cycle', 0) >= getattr(self, '_scan_trade_budget', 5):
+                self._record_skip_reason("scan_budget")
+                continue
+
+            current_price = prices.get(market.id, market.yes_price)
+
+            logger.info(
+                f"Alpha signal: {signal.action} {signal.market_type} | "
+                f"Alpha: ${float(signal.alpha):.2f} | "
+                f"P_model: {signal.p_model:.3f} | "
+                f"P_implied: {signal.p_implied:.3f if signal.p_implied else 'N/A'} | "
+                f"Market: ${current_price:.4f} | "
+                f"{group.event_key}"
+            )
+
+            result = await self._executor.execute_trade(
+                market=market,
+                current_price=current_price,
+                fair_price=signal.fair_price,
+                alpha=signal.alpha,
+                action=signal.action,
+                confidence=signal.confidence,
+                market_type=signal.market_type,
+                event_key=group.event_key,
+            )
+
+            self._trade_count += 1
+            if result.success:
+                self._scan_trades_this_cycle = getattr(self, '_scan_trades_this_cycle', 0) + 1
+
+            # Log prediction with cross-market fields
+            prediction = PredictionLog(
+                market_id=market.id,
+                question_text=market.question[:200],
+                city=group.city,
+                target_date=group.date,
+                condition_type=signal.market_type,
+                threshold_f=signal.distribution_mu,
+                forecast_temp_f=date_weather.temp_max,
+                sigma_used=signal.distribution_sigma,
+                z_score=signal.z_score,
+                days_to_resolution=days_out,
+                fair_price=signal.fair_price,
+                market_price=current_price,
+                alpha=signal.alpha,
+                side=signal.action,
+                size=result.order.size if result.order else 0.0,
+                capital_at_time=self._risk_manager._capital,
+                market_type=signal.market_type,
+                distribution_mu=mu,
+                distribution_sigma=sigma,
+                p_model=signal.p_model,
+                p_implied=signal.p_implied,
+                bucket_range=signal.bucket_range,
+            )
+            await self._logger.log_prediction(prediction)
+
+            # Log trade
+            await self._logger.log_trade(
+                market_id=market.id,
+                action=result.action,
+                fair_price=signal.fair_price,
+                market_price=current_price,
+                trade_size=result.order.size if result.order else 0,
+                alpha=signal.alpha,
+                reward_earned=result.reward_earned,
+            )
+
+            if result.success:
+                logger.info(f"Trade executed: {result.action} on {market.id[:8]}...")
+                self._traded_market_ids.add(market.id)
+            else:
+                logger.warning(f"Trade failed: {result.reason}")
+
     async def _analyze_single_market(
         self,
         market,
@@ -757,30 +894,8 @@ class TradingBot:
         return None
     
     def _extract_city_from_market(self, market) -> str:
-        """
-        Extract city name from market question for tracking.
-        
-        Args:
-            market: Market to extract city from
-            
-        Returns:
-            City name in lowercase
-        """
-        question = market.question.lower()
-        
-        # Common city patterns in market names
-        city_patterns = {
-            "seoul": ["seoul", "incheon"],
-            "london": ["london", "heathrow"],
-            "nyc": ["new york", "nyc", "new-york"],
-        }
-        
-        for city, patterns in city_patterns.items():
-            for pattern in patterns:
-                if pattern in question:
-                    return city
-        
-        return "unknown"
+        """Extract city name from market question using shared utility."""
+        return extract_city(market.question)
 
     def _get_weather_for_date(self, weather_data, target_date: str):
         """
@@ -826,34 +941,8 @@ class TradingBot:
         )
 
     def _extract_target_date(self, question: str) -> tuple[str, int]:
-        """
-        Extract target date and days-to-resolution from market question.
-
-        E.g. "Highest temperature in London on February 12?" → ("2026-02-12", 2)
-
-        Returns:
-            Tuple of (date_string, days_to_resolution)
-        """
-        import re
-        month_map = {
-            "january": 1, "february": 2, "march": 3, "april": 4,
-            "may": 5, "june": 6, "july": 7, "august": 8,
-            "september": 9, "october": 10, "november": 11, "december": 12
-        }
-        match = re.search(r'on\s+(\w+)\s+(\d{1,2})', question, re.IGNORECASE)
-        if match:
-            month_name = match.group(1).lower()
-            day = int(match.group(2))
-            month = month_map.get(month_name)
-            if month:
-                year = datetime.now().year
-                try:
-                    target = datetime(year, month, day).date()
-                    days_out = (target - datetime.now().date()).days
-                    return target.isoformat(), max(0, days_out)
-                except ValueError:
-                    pass
-        return datetime.now().date().isoformat(), 0
+        """Extract target date and days-to-resolution using shared utility."""
+        return extract_target_date(question)
 
     async def _process_weather_response(self, weather_data: Dict) -> Optional[Any]:
         """

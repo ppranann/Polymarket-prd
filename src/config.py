@@ -31,6 +31,8 @@ class RiskConfig:
     position_concentration: float
     profit_target: float
     max_exposure_per_market: float = 10.0  # Priority 4: Risk Management
+    max_exposure_per_event: float = 5.0   # Max $ across all contracts for one city+date
+    max_positions_per_event: int = 3      # Max positions per city+date
     max_daily_trades: int = 200  # Priority 4: Risk Management
     circuit_breaker_pnl_pct: float = 0.20  # Priority 4: 20% loss threshold
     circuit_breaker_window: int = 60  # Priority 4: minutes
@@ -60,6 +62,7 @@ class AlphaConfig:
     threshold: float  # Absolute alpha threshold (e.g. 0.10 = 10-cent edge)
     size_multiplier_max: float
     messy_middle_threshold: float = 0.15  # Wider no-trade zone for mid-priced markets
+    bucket_threshold: float = 0.10  # Stricter EV threshold for bucket/max-temp markets
 
 
 @dataclass
@@ -68,7 +71,7 @@ class ScannerConfig:
     price_threshold: float = 0.85
     snipe_price_threshold: float = 0.85
     min_price: float = 0.02              # Skip markets below this (no liquidity)
-    skip_range_markets: bool = True       # Only trade above/below, not range buckets
+    skip_range_markets: bool = False      # Trade both threshold and bucket markets
 
     # Timing (5-minute heartbeat for Tomorrow.io free tier)
     scan_interval: int = 300
@@ -279,6 +282,8 @@ class ConfigLoader:
                 position_concentration=risk_cfg['position_concentration'],
                 profit_target=risk_cfg['profit_target'],
                 max_exposure_per_market=risk_cfg.get('max_exposure_per_market', 10.0),
+                max_exposure_per_event=risk_cfg.get('max_exposure_per_event', 5.0),
+                max_positions_per_event=risk_cfg.get('max_positions_per_event', 3),
                 max_daily_trades=risk_cfg.get('max_daily_trades', 200),
                 circuit_breaker_pnl_pct=risk_cfg.get('circuit_breaker_pnl_pct', 0.20),
                 circuit_breaker_window=risk_cfg.get('circuit_breaker_window', 60),
@@ -300,7 +305,8 @@ class ConfigLoader:
                 enabled=alpha_cfg['enabled'],
                 threshold=alpha_cfg['threshold'],
                 size_multiplier_max=alpha_cfg['size_multiplier_max'],
-                messy_middle_threshold=alpha_cfg.get('messy_middle_threshold', 0.15)
+                messy_middle_threshold=alpha_cfg.get('messy_middle_threshold', 0.15),
+                bucket_threshold=alpha_cfg.get('bucket_threshold', 0.10)
             ),
             scanner=ScannerConfig(
                 scan_interval=scanner_cfg['scan_interval'],

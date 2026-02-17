@@ -290,7 +290,9 @@ class OrderExecutor:
         fair_price: float,
         alpha: float,
         action: str = "BUY",
-        confidence: float = 1.0
+        confidence: float = 1.0,
+        market_type: str = "threshold",
+        event_key: str = "",
     ) -> ExecutionResult:
         """
         Execute a trade based on market analysis.
@@ -356,7 +358,9 @@ class OrderExecutor:
             size = max_size
 
         # Check risk limits
-        can_trade, reason = self.risk.can_open_position(size, market.id)
+        can_trade, reason = self.risk.can_open_position(
+            size, market.id, event_key=event_key
+        )
         if not can_trade:
             return ExecutionResult(
                 success=False,
@@ -382,7 +386,9 @@ class OrderExecutor:
                 price=current_price,
                 size=size,
                 post_only=True,
-                entry_alpha=alpha
+                entry_alpha=alpha,
+                event_key=event_key,
+                market_type=market_type,
             )
         elif current_price < self.farming_config.price_threshold:
             # Farming mode: weak/no signal, farm for liquidity rewards
@@ -400,7 +406,9 @@ class OrderExecutor:
                 price=current_price,
                 size=size,
                 post_only=True,
-                entry_alpha=alpha
+                entry_alpha=alpha,
+                event_key=event_key,
+                market_type=market_type,
             )
     
     async def _farm_liquidity_adjusted(
@@ -760,7 +768,9 @@ class OrderExecutor:
         price: float,
         size: float,
         post_only: bool = True,
-        entry_alpha: float = 0.0
+        entry_alpha: float = 0.0,
+        event_key: str = "",
+        market_type: str = "threshold",
     ) -> ExecutionResult:
         """
         Place a single order.
@@ -818,7 +828,9 @@ class OrderExecutor:
                     outcome="YES",
                     size=size,
                     price=price,
-                    entry_alpha=entry_alpha
+                    entry_alpha=entry_alpha,
+                    event_key=event_key,
+                    market_type=market_type,
                 )
 
             return ExecutionResult(

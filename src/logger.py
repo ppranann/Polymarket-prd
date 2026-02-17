@@ -76,6 +76,13 @@ class PredictionLog:
     size: float
     capital_at_time: float
     created_at: Optional[datetime] = None
+    # Cross-market analysis fields
+    market_type: str = "threshold"     # "threshold" or "max_temp"
+    distribution_mu: float = 0.0      # Model distribution mean (°F)
+    distribution_sigma: float = 0.0   # Model distribution sigma (°F)
+    p_model: float = 0.0              # Model probability for this outcome
+    p_implied: Optional[float] = None # Implied probability from other market type
+    bucket_range: Optional[str] = None # e.g., "11-15" for bucket markets
     # Filled in later by resolution tracker
     resolved: bool = False
     actual_outcome: Optional[int] = None  # 1 = YES won, 0 = NO won
@@ -101,6 +108,12 @@ class PredictionLog:
             "side": self.side,
             "size": self.size,
             "capital_at_time": self.capital_at_time,
+            "market_type": self.market_type,
+            "distribution_mu": self.distribution_mu,
+            "distribution_sigma": self.distribution_sigma,
+            "p_model": self.p_model,
+            "p_implied": self.p_implied,
+            "bucket_range": self.bucket_range,
             "resolved": self.resolved,
             "actual_outcome": self.actual_outcome,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,

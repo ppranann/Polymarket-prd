@@ -77,6 +77,17 @@ class FairPriceCalculator:
         3: 5.5,   # 3 days out: even wider
     }
 
+    # Calibrated forecast error by lead time (hours).
+    # bias = mean(forecast - actual), sigma = std(forecast - actual).
+    # Positive bias means forecast runs hot → subtract from forecast.
+    # These should be tuned from historical forecast-vs-actual data.
+    FORECAST_ERROR = {
+        0:  {"bias": 0.0, "sigma": 2.0},   # Same-day
+        24: {"bias": 0.0, "sigma": 3.0},   # 1 day out
+        48: {"bias": 0.5, "sigma": 4.0},   # 2 days out
+        72: {"bias": 0.5, "sigma": 5.0},   # 3 days out
+    }
+
     # Extra sigma for range/bucket markets to fatten tails
     RANGE_SIGMA_ADDON = 1.0
 
@@ -126,6 +137,140 @@ class FairPriceCalculator:
 
         # Pre-compute for performance
         self._normal_dist = stats.norm(loc=0, scale=1)
+
+    def _interpolate_forecast_error(self, lead_hours: int) -> Dict[str, float]:
+        """
+        Interpolate forecast error stats for a given lead time.
+
+        Args:
+            lead_hours: Hours until resolution
+
+        Returns:
+            Dict with "bias" and "sigma" keys
+        """
+        breakpoints = sorted(self.FORECAST_ERROR.keys())
+
+        # Clamp to range
+        if lead_hours <= breakpoints[0]:
+            return self.FORECAST_ERROR[breakpoints[0]]
+        if lead_hours >= breakpoints[-1]:
+            return self.FORECAST_ERROR[breakpoints[-1]]
+
+        # Linear interpolation between bracketing breakpoints
+        for i in range(len(breakpoints) - 1):
+            lo, hi = breakpoints[i], breakpoints[i + 1]
+            if lo <= lead_hours <= hi:
+                frac = (lead_hours - lo) / (hi - lo)
+                lo_err = self.FORECAST_ERROR[lo]
+                hi_err = self.FORECAST_ERROR[hi]
+                return {
+                    "bias": lo_err["bias"] + frac * (hi_err["bias"] - lo_err["bias"]),
+                    "sigma": lo_err["sigma"] + frac * (hi_err["sigma"] - lo_err["sigma"]),
+                }
+
+        return self.FORECAST_ERROR[breakpoints[-1]]
+
+    def get_distribution(
+        self,
+        forecast_max_temp_f: float,
+        lead_hours: int,
+        forecast_spread_f: float = 0.0,
+    ) -> Tuple[float, float]:
+        """
+        Get the adjusted Normal distribution parameters for max temperature.
+
+        Uses calibrated forecast error to debias and set uncertainty.
+        All values in Fahrenheit.
+
+        Args:
+            forecast_max_temp_f: Tomorrow.io forecast max temp in °F
+            lead_hours: Hours until market resolution
+            forecast_spread_f: temp_max - temp_min from forecast (°F), used
+                               to widen sigma if forecast itself is uncertain
+
+        Returns:
+            Tuple of (mu, sigma) in °F for T ~ Normal(mu, sigma²)
+        """
+        error = self._interpolate_forecast_error(lead_hours)
+        mu = forecast_max_temp_f - error["bias"]
+        sigma = error["sigma"]
+
+        # Widen sigma if Tomorrow.io's own spread is wider than our model
+        if forecast_spread_f > 0:
+            spread_sigma = forecast_spread_f / 2.0
+            if spread_sigma > sigma:
+                logger.info(
+                    f"Distribution: widening sigma {sigma:.1f}°F → {spread_sigma:.1f}°F "
+                    f"(forecast spread: {forecast_spread_f:.1f}°F)"
+                )
+                sigma = spread_sigma
+
+        return mu, sigma
+
+    def calculate_bucket_probabilities(
+        self,
+        mu: float,
+        sigma: float,
+        buckets: list,
+    ) -> list:
+        """
+        Calculate P(T in bucket) for each bucket using Normal CDF.
+
+        Args:
+            mu: Distribution mean (°F)
+            sigma: Distribution std dev (°F)
+            buckets: List of (low, high) tuples in °F.
+                     Use float('-inf') / float('inf') for unbounded.
+
+        Returns:
+            List of probabilities (same order as buckets), summing to ~1.0
+        """
+        probs = []
+        for low, high in buckets:
+            if low == float('-inf'):
+                p = self._normal_dist.cdf((high - mu) / sigma)
+            elif high == float('inf'):
+                p = 1.0 - self._normal_dist.cdf((low - mu) / sigma)
+            else:
+                p = (
+                    self._normal_dist.cdf((high - mu) / sigma)
+                    - self._normal_dist.cdf((low - mu) / sigma)
+                )
+            probs.append(max(p, 0.001))  # Floor at 0.1% — no bucket is truly 0
+
+        # Normalize so they sum to 1.0 (accounts for floor adjustments)
+        total = sum(probs)
+        if total > 0:
+            probs = [p / total for p in probs]
+
+        return probs
+
+    def calculate_threshold_probability(
+        self,
+        mu: float,
+        sigma: float,
+        threshold_f: float,
+        direction: str,
+    ) -> float:
+        """
+        Calculate P(T >= threshold) or P(T <= threshold) from the distribution.
+
+        Args:
+            mu: Distribution mean (°F)
+            sigma: Distribution std dev (°F)
+            threshold_f: Temperature threshold in °F
+            direction: "above" or "below"
+
+        Returns:
+            Probability in [0.001, 0.98]
+        """
+        z = (threshold_f - mu) / sigma
+        if direction == "above":
+            p = 1.0 - self._normal_dist.cdf(z)
+        else:
+            p = self._normal_dist.cdf(z)
+
+        return float(np.clip(p, self.MIN_PRICE, 0.98))
 
     def get_dynamic_sigma(self, market_condition: str) -> float:
         """

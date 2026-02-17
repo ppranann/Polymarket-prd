@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from .config import BotConfig
 from .clients.polymarket import Market, PolymarketClient
+from .utils import extract_city, extract_target_date, classify_market_type, make_event_key
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,20 @@ class ScannedMarket:
     weather_data: Optional[Dict] = None
     fair_price: Optional[float] = None
     alpha: Optional[float] = None
+
+
+@dataclass
+class MarketGroup:
+    """Groups all markets for a single city+date event."""
+    city: str
+    date: str  # ISO date "2026-02-18"
+    event_key: str  # "seoul_2026-02-18"
+    threshold_markets: List[Market] = field(default_factory=list)
+    bucket_markets: List[Market] = field(default_factory=list)
+
+    @property
+    def all_markets(self) -> List[Market]:
+        return self.threshold_markets + self.bucket_markets
 
 
 @dataclass
@@ -379,6 +394,49 @@ class MarketScanner:
             "price_poll_interval": self._price_poll_interval
         }
     
+    def group_markets_by_event(self, markets: List[Market]) -> List[MarketGroup]:
+        """
+        Group markets by city+date into MarketGroup objects.
+
+        Each group contains both threshold (above/below) and bucket (range)
+        markets for the same city+date, enabling cross-market analysis.
+
+        Args:
+            markets: List of qualifying markets
+
+        Returns:
+            List of MarketGroup objects
+        """
+        groups: Dict[str, MarketGroup] = {}
+
+        for market in markets:
+            city = extract_city(market.question)
+            date_str, _ = extract_target_date(market.question)
+            event_key = make_event_key(city, date_str)
+            market_type = classify_market_type(market.question)
+
+            if event_key not in groups:
+                groups[event_key] = MarketGroup(
+                    city=city,
+                    date=date_str,
+                    event_key=event_key,
+                )
+
+            group = groups[event_key]
+            if market_type == "threshold":
+                group.threshold_markets.append(market)
+            else:
+                group.bucket_markets.append(market)
+
+        # Log summary
+        for key, grp in groups.items():
+            logger.info(
+                f"MarketGroup {key}: {len(grp.threshold_markets)} threshold, "
+                f"{len(grp.bucket_markets)} bucket markets"
+            )
+
+        return list(groups.values())
+
     def clear_cache(self, market_id: Optional[str] = None):
         """
         Clear the weather cache.
@@ -438,18 +496,6 @@ class MarketScanner:
         if market.yes_price < min_price:
             logger.debug(f"Skipping {market.id[:8]} - price ${market.yes_price:.4f} below min ${min_price}")
             return False
-
-        # Only trade above/below markets — range buckets have tiny edges
-        # and near-zero liquidity on Polymarket weather markets
-        skip_range = getattr(self.scanner_config, 'skip_range_markets', True)
-        if skip_range:
-            q_lower = market.question.lower()
-            above_kw = ["higher", "above", "or more", "at least", "over"]
-            below_kw = ["lower", "below", "or less", "at most", "under"]
-            is_directional = any(kw in q_lower for kw in above_kw + below_kw)
-            if not is_directional:
-                logger.debug(f"Skipping {market.id[:8]} - range/bucket market: {market.question[:50]}")
-                return False
 
         # Must have Liquidity Rewards if required
         if require_rewards and not market.liquidity_rewards_enabled:

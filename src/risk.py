@@ -30,6 +30,8 @@ class Position:
     last_updated: datetime
     peak_pnl_percentage: float = 0.0  # Track peak profit for trailing stop
     entry_alpha: float = 0.0  # Alpha signal strength when entering
+    event_key: str = ""  # "seoul_2026-02-18" — groups positions by city+date
+    market_type: str = "threshold"  # "threshold" or "max_temp"
     
     @property
     def current_value(self) -> float:
@@ -152,6 +154,36 @@ class RiskManager:
         """Get reason for pause"""
         return self._pause_reason
     
+    def get_event_exposure(self, event_key: str) -> float:
+        """
+        Get total exposure for a city+date event.
+
+        Args:
+            event_key: Event key like "seoul_2026-02-18"
+
+        Returns:
+            Total position size across all markets for this event
+        """
+        return sum(
+            p.size for p in self._positions.values()
+            if p.event_key == event_key
+        )
+
+    def get_event_position_count(self, event_key: str) -> int:
+        """
+        Get number of open positions for a city+date event.
+
+        Args:
+            event_key: Event key like "seoul_2026-02-18"
+
+        Returns:
+            Number of positions for this event
+        """
+        return sum(
+            1 for p in self._positions.values()
+            if p.event_key == event_key
+        )
+
     def check_circuit_breaker(self) -> tuple[bool, str]:
         """
         Check if circuit breaker should be triggered (Priority 4: Risk Management).
@@ -213,7 +245,8 @@ class RiskManager:
         self,
         size: float,
         market_id: str = None,
-        check_daily_limit: bool = True
+        check_daily_limit: bool = True,
+        event_key: str = "",
     ) -> tuple[bool, str]:
         """
         Check if a new position can be opened.
@@ -259,6 +292,26 @@ class RiskManager:
                 total_exposure = existing.size + size
                 if total_exposure > self.risk.max_exposure_per_market:
                     return False, f"Per-market exposure cap exceeded: ${total_exposure:.2f} > ${self.risk.max_exposure_per_market:.2f}"
+
+        # Check per-event (city+date) exposure cap
+        if event_key:
+            max_event_exposure = getattr(self.risk, 'max_exposure_per_event', 5.0)
+            max_event_positions = getattr(self.risk, 'max_positions_per_event', 3)
+
+            current_event_exposure = self.get_event_exposure(event_key)
+            if current_event_exposure + size > max_event_exposure:
+                return False, (
+                    f"Per-event exposure cap exceeded: "
+                    f"${current_event_exposure + size:.2f} > ${max_event_exposure:.2f} "
+                    f"for {event_key}"
+                )
+
+            current_event_count = self.get_event_position_count(event_key)
+            if current_event_count >= max_event_positions:
+                return False, (
+                    f"Per-event position cap exceeded: "
+                    f"{current_event_count}/{max_event_positions} for {event_key}"
+                )
 
         # Check daily trade limit (Priority 4: Risk Management)
         if check_daily_limit:
@@ -358,7 +411,9 @@ class RiskManager:
         outcome: str,
         size: float,
         price: float,
-        entry_alpha: float = 0.0
+        entry_alpha: float = 0.0,
+        event_key: str = "",
+        market_type: str = "threshold",
     ) -> Position:
         """
         Open a new position and track it.
@@ -382,7 +437,9 @@ class RiskManager:
             opened_at=datetime.now(),
             last_updated=datetime.now(),
             peak_pnl_percentage=0.0,
-            entry_alpha=entry_alpha
+            entry_alpha=entry_alpha,
+            event_key=event_key,
+            market_type=market_type,
         )
         
         self._positions[market_id] = position
@@ -569,7 +626,9 @@ class RiskManager:
                     "unrealized_pnl": pos.unrealized_pnl,
                     "pnl_percentage": pos.pnl_percentage,
                     "opened_at": pos.opened_at.isoformat(),
-                    "entry_alpha": pos.entry_alpha
+                    "entry_alpha": pos.entry_alpha,
+                    "event_key": pos.event_key,
+                    "market_type": pos.market_type
                 }
                 for mid, pos in self._positions.items()
             },
