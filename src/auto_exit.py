@@ -88,58 +88,86 @@ class AutoExitManager:
     ) -> List[ExitSignal]:
         """
         Check all positions for exit conditions.
-        
+
         Exit Logic:
-        1. TRAILING_STOP: Exit if profit drops X% from peak (lets profits run!)
-        2. RISK_EXIT: Exit if position moves strongly against prediction
-        
-        No fixed profit target - let winners run!
-        
+        1. PROFIT_TARGET: Exit when position has doubled (100% gain).
+        2. TRAILING_STOP: Let big winners run; exit if price drops 25% from peak.
+        3. RISK_EXIT: Only for expensive markets (avg_price >= 0.20).
+           Cheap prediction markets are binary bets — Kelly sizing already prices
+           in total-loss risk. A -15% move on a $0.08 market is $0.012 of noise;
+           stopping out here sacrifices the 12.5x resolution payout.
+
         Args:
             positions: Dictionary of market_id -> Position
             current_prices: Dictionary of market_id -> current price
-            
+
         Returns:
             List of ExitSignal objects for positions to exit
         """
         exit_signals = []
-        
+
         for market_id, position in positions.items():
             current_price = current_prices.get(market_id)
-            
+
             if current_price is None:
                 continue
-            
+
             # Update position with current price (also updates peak_pnl)
             self.risk.update_position(market_id, current_price)
-            
-            # Check 1: TRAILING_STOP - Let profits run, but exit if they drop from peak
-            # Exit if profit drops 15% from its peak (captures extended runs)
-            if position.pnl_percentage >= 20 and position.peak_pnl_percentage >= 30:
+
+            # Check 1: PROFIT_TARGET — take profit when position has doubled.
+            # For $0.08 entry → fires at $0.16+. Captures market repricing toward
+            # fair value before resolution, locking in realized gains.
+            if position.pnl_percentage >= 100:
+                signal = self._create_exit_signal(
+                    position=position,
+                    current_price=current_price,
+                    exit_type="PROFIT_TARGET",
+                    reason=(
+                        f"Profit target: {position.pnl_percentage:.1f}% gain "
+                        f"(entry ${position.avg_price:.3f} → ${current_price:.3f})"
+                    )
+                )
+                exit_signals.append(signal)
+                continue
+
+            # Check 2: TRAILING_STOP — let big winners run further.
+            # Only engages after 50%+ peak gain; exits if drops 25% from peak.
+            # Wider than before (was: peak>=30, drop>=15) to avoid noise exits.
+            if position.pnl_percentage >= 30 and position.peak_pnl_percentage >= 50:
                 drop_from_peak = position.peak_pnl_percentage - position.pnl_percentage
-                if drop_from_peak >= 15:  # Dropped 15%+ from peak
+                if drop_from_peak >= 25:
                     signal = self._create_exit_signal(
                         position=position,
                         current_price=current_price,
                         exit_type="TRAILING_STOP",
-                        reason=f"Trailing stop: {position.pnl_percentage:.1f}% (peak was {position.peak_pnl_percentage:.1f}%, drop: -{drop_from_peak:.1f}%)"
+                        reason=(
+                            f"Trailing stop: {position.pnl_percentage:.1f}% "
+                            f"(peak was {position.peak_pnl_percentage:.1f}%, "
+                            f"drop: -{drop_from_peak:.1f}%)"
+                        )
                     )
                     exit_signals.append(signal)
                     continue
-            
-            # Check 2: RISK_EXIT - Market moved strongly against prediction
-            # If we entered with high alpha confidence but position is losing
-            if position.entry_alpha > 0.15:  # High conviction entry (15+ cent edge)
-                if position.pnl_percentage < -15:  # But now down 15%+
+
+            # Check 3: RISK_EXIT — expensive markets only (avg_price >= 0.20).
+            # For cheap prediction markets ($0.05-$0.20), DO NOT stop out on %.
+            # These are binary bets; a $0.012 price move = -15% on $0.08 entry,
+            # which is pure bid-ask noise. Kelly already sizes for total-loss risk.
+            if position.avg_price >= 0.20 and position.entry_alpha > 0.15:
+                if position.pnl_percentage < -20:
                     signal = self._create_exit_signal(
                         position=position,
                         current_price=current_price,
                         exit_type="RISK_EXIT",
-                        reason=f"Risk exit: Entry alpha ${position.entry_alpha:.2f} but position down {position.pnl_percentage:.1f}%"
+                        reason=(
+                            f"Risk exit: Entry alpha ${position.entry_alpha:.2f} "
+                            f"but position down {position.pnl_percentage:.1f}%"
+                        )
                     )
                     exit_signals.append(signal)
                     continue
-        
+
         return exit_signals
     
     def _create_exit_signal(

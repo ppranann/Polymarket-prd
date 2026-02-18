@@ -236,12 +236,16 @@ class FairPriceCalculator:
                     self._normal_dist.cdf((high - mu) / sigma)
                     - self._normal_dist.cdf((low - mu) / sigma)
                 )
-            probs.append(max(p, 0.001))  # Floor at 0.1% — no bucket is truly 0
+            probs.append(min(max(p, 0.001), 0.98))  # Floor 0.1%, ceiling 98%
 
-        # Normalize so they sum to 1.0 (accounts for floor adjustments)
-        total = sum(probs)
-        if total > 0:
-            probs = [p / total for p in probs]
+        # Normalize only for multi-bucket queries (mutually exclusive outcomes).
+        # For single-bucket calls (alpha.py queries each market individually),
+        # normalization would compute p/p = 1.0, completely masking the actual
+        # CDF probability and causing P_model=1.000 on wide-range buckets.
+        if len(probs) > 1:
+            total = sum(probs)
+            if total > 0:
+                probs = [p / total for p in probs]
 
         return probs
 

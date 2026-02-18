@@ -821,7 +821,7 @@ class OrderExecutor:
             # Record action timestamp for cooldown (Priority 1: Cost Control)
             self._market_last_action[market.id] = datetime.now()
 
-            # Track position in risk manager (for BUY orders)
+            # Track position in risk manager
             if side == "BUY":
                 self.risk.open_position(
                     market_id=market.id,
@@ -832,6 +832,11 @@ class OrderExecutor:
                     event_key=event_key,
                     market_type=market_type,
                 )
+            elif side == "SELL":
+                # Close position when model-disagreement SELL signal fires.
+                # Without this, the risk manager keeps the position open forever
+                # even though it's been sold on Polymarket.
+                self.risk.close_position(market_id=market.id, exit_price=price)
 
             return ExecutionResult(
                 success=True,
