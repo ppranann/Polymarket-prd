@@ -23,9 +23,9 @@ tomorrow_io:
 
 risk:
   initial_capital: 30.0
-  max_trade_size: 3.00             # Increased to $3 for Reward eligibility
+  max_trade_size: 20.00            # Absolute safety ceiling (pct cap is the real limit)
   max_trade_size_pct: 0.10         # 10% of current capital per trade (scales automatically)
-  kelly_scale: 0.10               # 10% Kelly (safer per-trade, let volume compound)
+  kelly_scale: 0.25               # 25% Kelly → produces 5-10% of capital per trade
   min_trade_size: 0.25            # Lower floor to capture small edges on $30 capital
   max_daily_loss: 4.50
   max_open_positions: 10           # Reduced from 20 — fewer, higher conviction

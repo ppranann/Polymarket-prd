@@ -267,9 +267,11 @@ class RiskManager:
         if size < 0.10:
             return False, f"Position too small: ${size:.2f} (minimum: $0.10)"
         
-        # Check maximum trade size
-        if size > self.risk.max_trade_size:
-            return False, f"Position exceeds max size: ${size:.2f} (max: ${self.risk.max_trade_size:.2f})"
+        # Check maximum trade size (dynamic: % of capital, floored by absolute max)
+        pct_cap = self._capital * self.risk.max_trade_size_pct
+        effective_max = min(pct_cap, self.risk.max_trade_size)
+        if size > effective_max:
+            return False, f"Position exceeds max size: ${size:.2f} (max: ${effective_max:.2f} = {self.risk.max_trade_size_pct:.0%} of ${self._capital:.0f})"
         
         # Check available capital
         if size > self.capital:
@@ -397,13 +399,19 @@ class RiskManager:
             )
             return 0.0
 
-        # Cap at config max_trade_size (must agree with can_open_position)
+        # Dynamic cap: percentage of current capital so trade size scales with
+        # account growth. Absolute max_trade_size acts as a safety ceiling only.
+        pct_cap = self._capital * self.risk.max_trade_size_pct
+        effective_cap = min(pct_cap, self.risk.max_trade_size)
+        sized = min(kelly_size, effective_cap)
+
         logger.info(
-            f"Position size: ${min(kelly_size, self.risk.max_trade_size):.2f} "
+            f"Position size: ${sized:.2f} "
             f"(kelly=${kelly_size:.2f}, frac={kelly_fraction:.4f}, "
+            f"cap={effective_cap:.2f} [{self.risk.max_trade_size_pct:.0%} of ${self._capital:.0f}], "
             f"fair={fair_price:.4f}, mkt={market_price:.4f})"
         )
-        return min(kelly_size, self.risk.max_trade_size)
+        return sized
     
     def open_position(
         self,
