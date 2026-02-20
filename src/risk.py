@@ -294,13 +294,11 @@ class RiskManager:
             if concentration < self.risk.position_concentration:
                 return False, f"Position concentration too high: {concentration:.1%}"
 
-        # Check per-market exposure cap (Priority 4: Risk Management)
-        if market_id:
-            existing = self._positions.get(market_id)
-            if existing:
-                total_exposure = existing.size + size
-                if total_exposure > self.risk.max_exposure_per_market:
-                    return False, f"Per-market exposure cap exceeded: ${total_exposure:.2f} > ${self.risk.max_exposure_per_market:.2f}"
+        # Block re-entry: if we already hold any position in this market, don't add more.
+        # Prediction markets are binary — enter once, wait for resolution.
+        # Averaging up/down just compounds risk without improving the edge.
+        if market_id and market_id in self._positions:
+            return False, f"Already holding position in {market_id[:8]}... — no re-entry while open"
 
         # Check per-event (city+date) exposure cap
         if event_key:
