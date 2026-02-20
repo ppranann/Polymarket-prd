@@ -801,12 +801,17 @@ class OrderExecutor:
             )
 
         try:
+            # Convert dollar size to shares for the Polymarket CLOB API.
+            # calculate_position_size returns USDC amount; API expects share count.
+            # shares = dollars / price_per_share
+            size_shares = size / price if price > 0 else 0.0
+
             # Place the order
             order = await self.client.place_limit_order(
                 market_id=market.id,
                 side=side,
                 price=price,
-                size=size,
+                size=size_shares,
                 post_only=post_only
             )
             

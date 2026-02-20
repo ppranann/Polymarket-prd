@@ -34,23 +34,28 @@ class Position:
     market_type: str = "threshold"  # "threshold" or "max_temp"
     
     @property
+    def shares(self) -> float:
+        """Number of shares held (size is stored in dollars)"""
+        return self.size / self.avg_price if self.avg_price > 0 else 0.0
+
+    @property
     def current_value(self) -> float:
-        """Current value of the position"""
-        return self.size * self.current_price
-    
+        """Current dollar value of the position (shares × current_price)"""
+        return self.shares * self.current_price
+
     @property
     def cost_basis(self) -> float:
-        """Total cost of the position"""
-        return self.size * self.avg_price
-    
+        """Original dollar cost of the position"""
+        return self.size
+
     @property
     def unrealized_pnl(self) -> float:
-        """Unrealized profit/loss"""
+        """Unrealized profit/loss in dollars"""
         return self.current_value - self.cost_basis
-    
+
     @property
     def pnl_percentage(self) -> float:
-        """Profit/loss as percentage"""
+        """Profit/loss as percentage of cost basis"""
         if self.cost_basis == 0:
             return 0.0
         return (self.unrealized_pnl / self.cost_basis) * 100

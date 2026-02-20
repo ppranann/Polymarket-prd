@@ -225,11 +225,15 @@ class AutoExitManager:
         )
         
         try:
+            # Convert dollar size back to shares for the API.
+            # position.size is stored in dollars; API expects share count.
+            size_shares = position.shares  # = size / avg_price
+
             # Place market order to exit
             order = await self.client.place_market_order(
                 market_id=position.market_id,
                 side="SELL",
-                size=position.size,
+                size=size_shares,
                 price=exit_signal.current_price
             )
             
