@@ -716,6 +716,12 @@ class OrderExecutor:
         now = datetime.now()
         
         for market_id, position in list(self._farming_positions.items()):
+            # If market was exited or blocked, stop farming it entirely
+            if market_id in self._permanently_blocked:
+                logger.info(f"Cancelling farming on blocked market {market_id[:8]}...")
+                await self._cancel_farming_position(market_id)
+                continue
+
             # Check if we need to rebalance
             needs_rebalance = False
             

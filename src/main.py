@@ -258,12 +258,22 @@ class TradingBot:
         
         logger.info("Audit Logger initialized")
 
-        # Pre-populate permanent block list from Supabase EXIT history.
-        # Without this, every container restart clears the in-memory block set
-        # and the bot re-buys markets it already exited.
+        # Pre-populate permanent block list from Supabase history on startup.
+        # Without this, container restarts clear the in-memory block set and
+        # the bot re-buys markets it already holds or has already exited.
+        #
+        # Block recently bought markets (covers open positions lost on restart)
+        # AND recently exited markets (covers the exit+re-entry bug).
+        bought_ids = await self._logger.get_recently_bought_market_ids(days=7)
         exited_ids = await self._logger.get_recently_exited_market_ids(days=7)
-        for market_id in exited_ids:
+        all_blocked = set(bought_ids) | set(exited_ids)
+        for market_id in all_blocked:
             self._executor.block_market(market_id)
+        if all_blocked:
+            logger.info(
+                f"Startup block list: {len(all_blocked)} market(s) blocked "
+                f"({len(bought_ids)} bought, {len(exited_ids)} exited)"
+            )
 
         # Initialize Resolution Tracker
         self._resolution_tracker = ResolutionTracker(self._logger)

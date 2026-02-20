@@ -591,6 +591,42 @@ class AuditLogger:
             logger.error(f"Failed to get daily summary: {e}")
             return {"error": str(e)}
     
+    async def get_recently_bought_market_ids(self, days: int = 7) -> list:
+        """
+        Fetch market IDs that had BUY trades in the last N days.
+        Used on startup to block markets we currently hold positions in —
+        the in-memory _positions dict is empty after a restart, so without
+        this the bot re-buys markets it already owns.
+
+        Args:
+            days: How far back to look (default 7 — covers all active weather markets)
+
+        Returns:
+            List of market_id strings that had recent BUY events
+        """
+        if not self._connected or not self._client:
+            return []
+
+        try:
+            from datetime import timedelta
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+            table = f"{self.table_prefix}audit_log"
+            result = (
+                self._client.table(table)
+                .select("market_id")
+                .eq("event_type", "TRADE")
+                .eq("action", "BUY")
+                .gte("created_at", cutoff)
+                .execute()
+            )
+            ids = list({row["market_id"] for row in result.data if row.get("market_id")})
+            if ids:
+                logger.info(f"Loaded {len(ids)} recently bought market(s) from Supabase to block list")
+            return ids
+        except Exception as e:
+            logger.warning(f"Could not load recently bought markets from Supabase: {e}")
+            return []
+
     async def get_recently_exited_market_ids(self, days: int = 7) -> list:
         """
         Fetch market IDs that were exited in the last N days from Supabase.
