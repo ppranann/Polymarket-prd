@@ -590,6 +590,11 @@ class TradingBot:
             if result.success:
                 self._scan_trades_this_cycle = getattr(self, '_scan_trades_this_cycle', 0) + 1
 
+            # Only log to Supabase on actual executions — not on SKIP/blocked
+            if result.action == "SKIP":
+                logger.warning(f"Trade failed: {result.reason}")
+                continue
+
             # Log prediction with cross-market fields
             prediction = PredictionLog(
                 market_id=market.id,
