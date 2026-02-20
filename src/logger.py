@@ -591,6 +591,40 @@ class AuditLogger:
             logger.error(f"Failed to get daily summary: {e}")
             return {"error": str(e)}
     
+    async def get_recently_exited_market_ids(self, days: int = 7) -> list:
+        """
+        Fetch market IDs that were exited in the last N days from Supabase.
+        Used on startup to pre-populate the permanent block list so container
+        restarts don't re-enter markets we already traded and exited.
+
+        Args:
+            days: How far back to look (default 7 — covers all active weather markets)
+
+        Returns:
+            List of market_id strings that had EXIT events
+        """
+        if not self._connected or not self._client:
+            return []
+
+        try:
+            from datetime import timedelta
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+            table = f"{self.table_prefix}audit_log"
+            result = (
+                self._client.table(table)
+                .select("market_id")
+                .eq("event_type", "EXIT")
+                .gte("created_at", cutoff)
+                .execute()
+            )
+            ids = [row["market_id"] for row in result.data if row.get("market_id")]
+            if ids:
+                logger.info(f"Loaded {len(ids)} previously exited market(s) from Supabase to block list")
+            return ids
+        except Exception as e:
+            logger.warning(f"Could not load exited markets from Supabase: {e}")
+            return []
+
     async def close(self):
         """Close the logger and sync any remaining buffer"""
         await self.sync_buffer()

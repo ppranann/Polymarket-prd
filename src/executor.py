@@ -862,6 +862,9 @@ class OrderExecutor:
                 # Without this, the risk manager keeps the position open forever
                 # even though it's been sold on Polymarket.
                 self.risk.close_position(market_id=market.id, exit_price=price)
+                # Permanently block re-entry — any successful SELL means we're done
+                # with this market for this run, regardless of how it was triggered.
+                self.block_market(market.id)
 
             return ExecutionResult(
                 success=True,
