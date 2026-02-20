@@ -676,32 +676,6 @@ class RiskManager:
             "pause_reason": self._pause_reason
         }
     
-    def validate_market_filter(
-        self,
-        market_price: float,
-        market_id: str
-    ) -> tuple[bool, str]:
-        """
-        Validate if a market meets our trading criteria.
-        
-        Args:
-            market_price: Current YES price
-            market_id: Market ID
-            
-        Returns:
-            Tuple of (valid: bool, reason: str)
-        """
-        # Check price threshold (only trade cheap markets)
-        if market_price >= self.config.scanner.price_threshold:
-            return False, f"Price too high: ${market_price:.4f} (threshold: ${self.config.scanner.price_threshold:.4f})"
-        
-        # Check if we already have too much exposure to this market
-        if market_id in self._positions:
-            existing = self._positions[market_id]
-            if existing.size >= self.risk.max_trade_size:
-                return False, f"Max position already held in {market_id}"
-        
-        return True, "Market valid for trading"
 
 
 def create_risk_manager(

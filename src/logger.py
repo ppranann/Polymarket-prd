@@ -137,7 +137,7 @@ class RewardLog:
         return {
             "market_id": self.market_id,
             "usdc_earned": self.usdc_earned,
-            "order_ids": order_ids if isinstance(order_ids, list) else [order_ids],
+            "order_ids": self.order_ids if isinstance(self.order_ids, list) else [self.order_ids],
             "order_type": self.order_type,
             "duration_hours": self.duration_hours
         }

@@ -383,9 +383,6 @@ class AutoExitManager:
         Returns:
             List of recent exit signals
         """
-        cutoff = datetime.now() - asyncio.timedelta(hours=hours) if False else datetime.now()
-        
-        # Since we can't use asyncio.timedelta in sync context
         from datetime import timedelta
         cutoff = datetime.now() - timedelta(hours=hours)
         

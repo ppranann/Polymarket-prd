@@ -12,6 +12,7 @@ Mathematical Model:
 
 import logging
 import math
+import re
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
@@ -286,7 +287,6 @@ class FairPriceCalculator:
         Returns:
             Sigma in °F adjusted for forecast horizon
         """
-        import re
         from datetime import datetime
 
         month_map = {
@@ -533,7 +533,6 @@ class FairPriceCalculator:
         Returns:
             Condition type: "above", "below", "precipitation", "range", or "other"
         """
-        import re
         condition_lower = condition.lower()
 
         # CRITICAL FIX: Polymarket uses "higher"/"lower", not just "above"/"below"
@@ -621,8 +620,6 @@ class FairPriceCalculator:
         Returns:
             Probability of temperature in range
         """
-        import re
-
         # Fat tails for range/bucket markets: widen sigma to avoid overconfidence
         sigma = sigma + self.RANGE_SIGMA_ADDON
 
@@ -852,7 +849,6 @@ class FairPriceCalculator:
                 return threshold
 
         # Try to extract from pattern
-        import re
 
         # CRITICAL: Detect if temperature is in Celsius or Fahrenheit
         is_celsius = '°C' in condition or '°c' in condition or ' C' in condition
