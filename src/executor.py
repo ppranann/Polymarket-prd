@@ -327,13 +327,13 @@ class OrderExecutor:
                 reason="No trading signal (alpha below threshold)"
             )
 
-        # Check permanent block — once a market is exited, never re-enter this run
+        # Check permanent block — once a market is traded/exited, never re-enter
         if market.id in self._permanently_blocked:
             return ExecutionResult(
                 success=False,
                 order=None,
                 action="SKIP",
-                reason="Market permanently blocked (previously exited this session)"
+                reason="Market permanently blocked (previously traded — loaded from history on startup)"
             )
 
         # Check cooldown (Priority 1: Cost Control)
