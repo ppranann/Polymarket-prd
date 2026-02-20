@@ -39,7 +39,7 @@ class RiskConfig:
     circuit_breaker_close_all: bool = False  # Priority 4
     max_trade_size_pct: float = 0.10  # Percentage of capital per trade (compounding)
     kelly_scale: float = 0.25  # Fractional Kelly multiplier (0.15 = conservative)
-    min_trade_size: float = 0.50  # Skip trades below this dollar amount
+    min_trade_size: float = 1.00  # Skip trades below this dollar amount
 
 
 @dataclass

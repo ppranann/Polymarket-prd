@@ -268,9 +268,11 @@ class RiskManager:
         if self._trading_paused:
             return False, f"Trading paused: {self._pause_reason}"
         
-        # Check minimum size
+        # Check minimum size (two-layer guard)
         if size < 0.10:
             return False, f"Position too small: ${size:.2f} (minimum: $0.10)"
+        if size < self.risk.min_trade_size:
+            return False, f"Position below min trade size: ${size:.2f} (minimum: ${self.risk.min_trade_size:.2f})"
         
         # Check maximum trade size (dynamic: % of capital, floored by absolute max)
         pct_cap = self._capital * self.risk.max_trade_size_pct
@@ -367,7 +369,7 @@ class RiskManager:
 
         # Kelly criterion: optimal fraction of bankroll
         kelly_scale = getattr(self.risk, 'kelly_scale', 0.15)
-        min_trade = getattr(self.risk, 'min_trade_size', 0.50)
+        min_trade = getattr(self.risk, 'min_trade_size', 1.00)
 
         # Guard: prevent division by zero (lowered from 0.005 to allow
         # very cheap weather markets that legitimately trade at $0.01)
@@ -386,17 +388,24 @@ class RiskManager:
         # Kelly bet size (fraction of total capital)
         kelly_size = self._capital * kelly_fraction
 
-        # If Kelly is below minimum but we have strong alpha, use min_trade
-        # instead of skipping entirely. This lets us take small positions
-        # on cheap markets with big edges.
+        # Dynamic cap: percentage of current capital so trade size scales with
+        # account growth. Absolute max_trade_size acts as a safety ceiling only.
+        pct_cap = self._capital * self.risk.max_trade_size_pct
+        effective_cap = min(pct_cap, self.risk.max_trade_size)
+
+        # Apply min floor and cap, preserving Kelly's proportional signal.
+        # If Kelly < min_trade: skip weak signals, floor strong ones to min_trade.
+        # Kelly still governs everything above min_trade up to the 10% cap.
         if kelly_size < min_trade:
             if alpha >= 0.10 and fair_price > market_price and market_price > 0.001:
+                sized = min_trade  # Floor: operational minimum, strong alpha only
                 logger.info(
-                    f"Kelly ${kelly_size:.2f} < min ${min_trade:.2f}, "
-                    f"using min_trade (strong alpha={alpha:.2f}, "
+                    f"Position size: ${sized:.2f} (floored from kelly=${kelly_size:.2f}, "
+                    f"frac={kelly_fraction:.4f}, cap={effective_cap:.2f} "
+                    f"[{self.risk.max_trade_size_pct:.0%} of ${self._capital:.0f}], "
                     f"fair={fair_price:.4f}, mkt={market_price:.4f})"
                 )
-                return min_trade
+                return sized
             logger.info(
                 f"Skipping: Kelly ${kelly_size:.4f} < min ${min_trade:.2f} "
                 f"(frac={kelly_fraction:.4f}, scale={kelly_scale}, "
@@ -404,10 +413,9 @@ class RiskManager:
             )
             return 0.0
 
-        # Dynamic cap: percentage of current capital so trade size scales with
-        # account growth. Absolute max_trade_size acts as a safety ceiling only.
-        pct_cap = self._capital * self.risk.max_trade_size_pct
-        effective_cap = min(pct_cap, self.risk.max_trade_size)
+        # Kelly >= min_trade: use Kelly directly, capped at 10% of capital.
+        # Confidence and alpha already baked into kelly_fraction — higher
+        # conviction → larger fraction → larger size, up to the cap.
         sized = min(kelly_size, effective_cap)
 
         logger.info(

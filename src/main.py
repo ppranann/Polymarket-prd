@@ -1123,6 +1123,8 @@ class TradingBot:
 
                     # Only log success if execution actually succeeded
                     if result_signal.executed:
+                        # Block this market from re-entry for the rest of this run
+                        self._executor.block_market(signal.market_id)
                         await self._logger.log_exit(
                             market_id=signal.market_id,
                             profit_loss=signal.profit_usdc,

@@ -143,6 +143,9 @@ class OrderExecutor:
         self._market_last_action: Dict[str, datetime] = {}
         self._cooldown_seconds = self.execution_config.cooldown_seconds
 
+        # Permanently blocked markets: once exited, never re-enter this run
+        self._permanently_blocked: set = set()
+
     async def _get_existing_orders(self, market_id: str) -> Dict[str, Any]:
         """
         Get existing orders for a market (Priority 1: Cost Control).
@@ -231,6 +234,14 @@ class OrderExecutor:
 
         return False, None
 
+    def block_market(self, market_id: str):
+        """
+        Permanently block a market from re-entry for this bot run.
+        Called after any auto-exit so the same market isn't re-bought.
+        """
+        self._permanently_blocked.add(market_id)
+        logger.info(f"Market {market_id[:8]}... permanently blocked from re-entry")
+
     def _validate_price_bands(
         self,
         buy_price: float,
@@ -314,6 +325,15 @@ class OrderExecutor:
                 order=None,
                 action="HOLD",
                 reason="No trading signal (alpha below threshold)"
+            )
+
+        # Check permanent block — once a market is exited, never re-enter this run
+        if market.id in self._permanently_blocked:
+            return ExecutionResult(
+                success=False,
+                order=None,
+                action="SKIP",
+                reason="Market permanently blocked (previously exited this session)"
             )
 
         # Check cooldown (Priority 1: Cost Control)
