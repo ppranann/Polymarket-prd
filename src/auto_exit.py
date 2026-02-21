@@ -150,19 +150,33 @@ class AutoExitManager:
                     exit_signals.append(signal)
                     continue
 
-            # Check 3: RISK_EXIT — expensive markets only (avg_price >= 0.20).
-            # For cheap prediction markets ($0.05-$0.20), DO NOT stop out on %.
-            # These are binary bets; a $0.012 price move = -15% on $0.08 entry,
-            # which is pure bid-ask noise. Kelly already sizes for total-loss risk.
-            if position.avg_price >= 0.20 and position.entry_alpha > 0.15:
+            # Check 3: RISK_EXIT — all markets get a stop loss, thresholds differ.
+            # Expensive markets (>= $0.20): tighter -20% stop.
+            # Cheap markets (< $0.20): wider -50% stop to absorb bid-ask noise
+            # (a $0.01 move on a $0.05 entry is -20% — normal spread noise).
+            # -50% means the market moved meaningfully against our model.
+            if position.avg_price >= 0.20:
                 if position.pnl_percentage < -20:
                     signal = self._create_exit_signal(
                         position=position,
                         current_price=current_price,
                         exit_type="RISK_EXIT",
                         reason=(
-                            f"Risk exit: Entry alpha ${position.entry_alpha:.2f} "
-                            f"but position down {position.pnl_percentage:.1f}%"
+                            f"Risk exit: down {position.pnl_percentage:.1f}% "
+                            f"(entry ${position.avg_price:.3f}, expensive market)"
+                        )
+                    )
+                    exit_signals.append(signal)
+                    continue
+            else:
+                if position.pnl_percentage < -50:
+                    signal = self._create_exit_signal(
+                        position=position,
+                        current_price=current_price,
+                        exit_type="RISK_EXIT",
+                        reason=(
+                            f"Risk exit: down {position.pnl_percentage:.1f}% "
+                            f"(entry ${position.avg_price:.3f}, cheap market stop)"
                         )
                     )
                     exit_signals.append(signal)
