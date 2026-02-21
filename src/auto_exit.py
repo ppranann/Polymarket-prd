@@ -112,6 +112,16 @@ class AutoExitManager:
             if current_price is None:
                 continue
 
+            # Sanity check: thin markets return 0.5 as default when orderbook is empty.
+            # A cheap entry ($0.03) reading $0.50 is NOT a real price — it's the
+            # fallback midpoint. Skip to avoid fake profit-target triggers.
+            if position.avg_price < 0.20 and current_price >= 0.45:
+                logger.warning(
+                    f"Skipping exit for {market_id[:8]}: price ${current_price:.3f} "
+                    f"looks like stale/default read (entry ${position.avg_price:.3f})"
+                )
+                continue
+
             # Update position with current price (also updates peak_pnl)
             self.risk.update_position(market_id, current_price)
 
