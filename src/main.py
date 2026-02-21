@@ -887,8 +887,14 @@ class TradingBot:
 
     async def _check_auto_exits(self):
         """Check positions for stop-loss conditions and cash out losers via market sell."""
+        # In paper mode: hold all positions to resolution.
+        # Early exits produce meaningless P&L and hide whether the model's
+        # directional call was right. We validate by checking resolutions only.
+        if self.paper_trading:
+            return
+
         positions = self._risk_manager.positions
-        
+
         if not positions:
             return
         
