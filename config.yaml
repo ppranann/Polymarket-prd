@@ -109,5 +109,5 @@ health:
 
 development:
   dry_run: false
-  paper_trading: true             # Keep simulated for the final Saturday test
+  paper_trading: false            # LIVE trading
   log_all_requests: false
