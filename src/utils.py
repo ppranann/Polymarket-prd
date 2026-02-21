@@ -8,6 +8,19 @@ import re
 from datetime import datetime
 from typing import Tuple
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # Python < 3.9 fallback
+
+# City → IANA timezone
+CITY_TIMEZONES = {
+    "london":   "Europe/London",
+    "nyc":      "America/New_York",
+    "seoul":    "Asia/Seoul",
+    "incheon":  "Asia/Seoul",
+}
+
 
 # Month name → number mapping
 MONTH_MAP = {
@@ -95,6 +108,29 @@ def classify_market_type(question: str) -> str:
 
     # Everything else (ranges, bare numbers, buckets) → max_temp
     return "max_temp"
+
+
+def hours_remaining_in_local_day(city: str) -> float:
+    """
+    Return hours remaining until midnight in the city's local timezone.
+
+    Used to decide whether a same-day market still has enough uncertainty
+    to trade. Once < 6h remain, the day's max temp is basically determined.
+
+    Args:
+        city: City slug (e.g. "london", "nyc", "seoul")
+
+    Returns:
+        Float hours remaining (0.0–24.0)
+    """
+    tz_name = CITY_TIMEZONES.get(city.lower(), "UTC")
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        return 0.0  # conservative: skip if lookup fails
+    now_local = datetime.now(tz)
+    seconds_elapsed = now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+    return (86400 - seconds_elapsed) / 3600
 
 
 def make_event_key(city: str, date: str) -> str:

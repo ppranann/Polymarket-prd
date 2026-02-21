@@ -36,7 +36,7 @@ from .auto_exit import create_auto_exit_manager, AutoExitManager
 from .logger import create_audit_logger, AuditLogger, PredictionLog
 from .performance import create_performance_reporter, PerformanceReporter
 from .resolution import ResolutionTracker
-from .utils import extract_city, extract_target_date, make_event_key, classify_market_type
+from .utils import extract_city, extract_target_date, make_event_key, classify_market_type, hours_remaining_in_local_day
 
 # Configure logging
 logging.basicConfig(
@@ -514,12 +514,21 @@ class TradingBot:
         )
         lead_hours = days_out * 24
 
-        # Skip same-day markets (lead=0h): the outcome is already unfolding.
-        # The model uses forecast temperature, but the market prices in real-time
-        # observations — we have no edge against live sensor data.
+        # Same-day markets (lead=0h): only trade if enough of the day remains.
+        # Early morning still has model edge (day's max temp not yet known).
+        # Afternoon/evening: market prices in live observations we can't see.
+        # Cutoff: skip if < 6h left in local day (outcome basically determined).
         if lead_hours == 0:
-            logger.info(f"Skipping {group.event_key} — same-day market (lead=0h), no forecast edge")
-            return
+            hours_left = hours_remaining_in_local_day(group.city)
+            if hours_left < 6:
+                logger.info(
+                    f"Skipping {group.event_key} — {hours_left:.1f}h left in local day "
+                    f"(< 6h cutoff), outcome nearly determined"
+                )
+                return
+            logger.info(
+                f"Same-day {group.event_key}: {hours_left:.1f}h remaining locally — trading"
+            )
 
         # Get shared distribution (mu, sigma) in Fahrenheit
         forecast_spread_f = date_weather.temp_max - date_weather.temp_min
