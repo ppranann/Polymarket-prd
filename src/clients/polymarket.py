@@ -333,10 +333,10 @@ class PolymarketClient:
                 side=side.upper(),  # "BUY" or "SELL"
             )
             signed_order = await asyncio.to_thread(self._clob.create_order, order_args)
-            resp = await asyncio.to_thread(self._clob.post_order, signed_order, OrderType.GTC)
+            resp = await asyncio.to_thread(self._clob.post_order, signed_order, OrderType.FOK)
 
             order_id = resp.get('orderID', resp.get('id', 'unknown')) if isinstance(resp, dict) else str(resp)
-            self._logger.info(f"LIVE MARKET ORDER: {side} ${size:.2f} on {market_id[:8]}... (orderID: {order_id})")
+            self._logger.info(f"LIVE MARKET ORDER (FOK): {side} ${size:.2f} on {market_id[:8]}... (orderID: {order_id})")
 
             return MockOrder(
                 order_id=order_id,

@@ -115,37 +115,62 @@ class AutoExitManager:
             # Update position with current price (also updates peak_pnl)
             self.risk.update_position(market_id, current_price)
 
-            # PROFIT_TARGET and TRAILING_STOP disabled:
-            # Strategy = hold winning positions to resolution for full $1.00 payout.
-            # Weather markets resolve within 24h — no need to sell early at a discount
-            # into a thin order book when we can just collect $1.00 at settlement.
+            # Check 1: PROFIT_TARGET — take profit when position has doubled.
+            if position.pnl_percentage >= 100:
+                signal = self._create_exit_signal(
+                    position=position,
+                    current_price=current_price,
+                    exit_type="PROFIT_TARGET",
+                    reason=(
+                        f"Profit target: {position.pnl_percentage:.1f}% gain "
+                        f"(entry ${position.avg_price:.3f} → ${current_price:.3f})"
+                    )
+                )
+                exit_signals.append(signal)
+                continue
 
-            # RISK_EXIT only: cash out losing positions immediately via market sell.
-            # This avoids holding to $0.00 when the market has clearly moved against us.
-            # Cheap markets (< $0.20): exit at -60% — needs a meaningful move, not noise.
-            # Expensive markets (>= $0.20): exit at -25% — tighter since more liquid.
+            # Check 2: TRAILING_STOP — let big winners run; exit if drops 25% from peak.
+            if position.pnl_percentage >= 30 and position.peak_pnl_percentage >= 50:
+                drop_from_peak = position.peak_pnl_percentage - position.pnl_percentage
+                if drop_from_peak >= 25:
+                    signal = self._create_exit_signal(
+                        position=position,
+                        current_price=current_price,
+                        exit_type="TRAILING_STOP",
+                        reason=(
+                            f"Trailing stop: {position.pnl_percentage:.1f}% "
+                            f"(peak was {position.peak_pnl_percentage:.1f}%, "
+                            f"drop: -{drop_from_peak:.1f}%)"
+                        )
+                    )
+                    exit_signals.append(signal)
+                    continue
+
+            # Check 3: RISK_EXIT stop-loss.
+            # Expensive markets (>= $0.20): -20% stop.
+            # Cheap markets (< $0.20): -50% stop (absorbs bid-ask spread noise).
             if position.avg_price >= 0.20:
-                if position.pnl_percentage < -25:
+                if position.pnl_percentage < -20:
                     signal = self._create_exit_signal(
                         position=position,
                         current_price=current_price,
                         exit_type="RISK_EXIT",
                         reason=(
-                            f"Cash out: down {position.pnl_percentage:.1f}% "
-                            f"(entry ${position.avg_price:.3f}, market moved against us)"
+                            f"Risk exit: down {position.pnl_percentage:.1f}% "
+                            f"(entry ${position.avg_price:.3f}, expensive market)"
                         )
                     )
                     exit_signals.append(signal)
                     continue
             else:
-                if position.pnl_percentage < -60:
+                if position.pnl_percentage < -50:
                     signal = self._create_exit_signal(
                         position=position,
                         current_price=current_price,
                         exit_type="RISK_EXIT",
                         reason=(
-                            f"Cash out: down {position.pnl_percentage:.1f}% "
-                            f"(entry ${position.avg_price:.3f}, market moved against us)"
+                            f"Risk exit: down {position.pnl_percentage:.1f}% "
+                            f"(entry ${position.avg_price:.3f}, cheap market stop)"
                         )
                     )
                     exit_signals.append(signal)
