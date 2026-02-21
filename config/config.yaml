@@ -39,7 +39,7 @@ aws:
 # Risk Parameters
 risk:
   initial_capital: 30.0            # Starting capital in USD ($30 deposited)
-  max_trade_size: 1.50             # Maximum per-event position (5% of capital)
+  max_trade_size: 50.00            # Safety ceiling — effective cap is 10% of capital (max_trade_size_pct)
   max_daily_loss: 2.00             # Stop trading if exceeded (~$7 max loss)
   max_open_positions: 3            # Diversification limit (smaller for $30)
   position_concentration: 0.20     # Max 20% concentration
@@ -131,6 +131,6 @@ execution:
 # Development Settings
 development:
   dry_run: false                  # If true, don't actually trade
-  paper_trading: true             # Simulate with fake orders
+  paper_trading: false            # LIVE trading
   log_all_requests: false         # Debug: log every API call
 
