@@ -514,6 +514,13 @@ class TradingBot:
         )
         lead_hours = days_out * 24
 
+        # Skip same-day markets (lead=0h): the outcome is already unfolding.
+        # The model uses forecast temperature, but the market prices in real-time
+        # observations — we have no edge against live sensor data.
+        if lead_hours == 0:
+            logger.info(f"Skipping {group.event_key} — same-day market (lead=0h), no forecast edge")
+            return
+
         # Get shared distribution (mu, sigma) in Fahrenheit
         forecast_spread_f = date_weather.temp_max - date_weather.temp_min
         mu, sigma = self._calculator.get_distribution(
