@@ -91,10 +91,16 @@ class PolymarketClient:
 
         # Extract credentials from secrets/config
         self._private_key = ''
+        self._api_secret = ''
+        self._api_passphrase = ''
+        self._proxy_address = ''
         self._chain_id = 137
         secrets = kwargs.get('secrets')
         if secrets:
             self._private_key = getattr(secrets, 'polygon_private_key', '')
+            self._api_secret = getattr(secrets, 'polymarket_api_secret', '')
+            self._api_passphrase = getattr(secrets, 'polymarket_api_passphrase', '')
+            self._proxy_address = getattr(secrets, 'polymarket_proxy_address', '')
         config = kwargs.get('config')
         if config:
             self._chain_id = getattr(config, 'chain_id', 137)
@@ -109,15 +115,34 @@ class PolymarketClient:
         self._clob = None
         if not self._paper_trading and self._private_key and CLOB_AVAILABLE:
             try:
+                # Use signature_type=2 (proxy wallet) when proxy address is provided
+                # — this is the correct mode when funds live in Polymarket's contract wallet
+                use_proxy = bool(self._proxy_address)
                 self._clob = ClobClient(
                     host=self.CLOB_URL,
                     key=self._private_key,
                     chain_id=self._chain_id,
-                    signature_type=0,  # EOA (standard wallet)
+                    signature_type=2 if use_proxy else 0,
+                    funder=self._proxy_address if use_proxy else None,
                 )
-                api_creds = self._clob.create_or_derive_api_creds()
+
+                # Use pre-provided API creds if passphrase is in secrets,
+                # otherwise derive them from the private key (slower, needs network)
+                if self._api_key and self._api_secret and self._api_passphrase:
+                    from py_clob_client.clob_types import ApiCreds
+                    api_creds = ApiCreds(
+                        api_key=self._api_key,
+                        api_secret=self._api_secret,
+                        api_passphrase=self._api_passphrase,
+                    )
+                    self._logger.info("Using pre-provided Polymarket API credentials")
+                else:
+                    api_creds = self._clob.create_or_derive_api_creds()
+                    self._logger.info("Derived API credentials from private key")
+
                 self._clob.set_api_creds(api_creds)
-                self._logger.info("CLOB client initialized for LIVE order placement")
+                mode = "proxy wallet" if use_proxy else "EOA"
+                self._logger.info(f"CLOB client initialized for LIVE order placement ({mode} mode)")
             except Exception as e:
                 self._logger.error(f"Failed to initialize CLOB client: {e}")
                 self._clob = None

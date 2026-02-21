@@ -24,14 +24,16 @@ class BotSecrets:
     polygon_private_key: str = ""
     polymarket_api_key: str = ""
     polymarket_api_secret: str = ""
-    
+    polymarket_api_passphrase: str = ""   # From Polymarket API credentials page
+    polymarket_proxy_address: str = ""    # Proxy contract wallet address shown on Polymarket profile
+
     # Tomorrow.io
     tomorrow_io_api_key: str = ""
-    
+
     # Supabase (optional - bot works without logging)
     supabase_url: str = ""
     supabase_service_key: str = ""
-    
+
     # Webhook (optional)
     webhook_url: Optional[str] = None
 
@@ -118,6 +120,8 @@ class SecretsManager:
             polygon_private_key=secrets_dict.get('polygon_private_key', ''),
             polymarket_api_key=secrets_dict.get('polymarket_api_key', ''),
             polymarket_api_secret=secrets_dict.get('polymarket_api_secret', ''),
+            polymarket_api_passphrase=secrets_dict.get('polymarket_api_passphrase', ''),
+            polymarket_proxy_address=secrets_dict.get('polymarket_proxy_address', ''),
             tomorrow_io_api_key=secrets_dict.get('tomorrow_io_api_key', ''),
             supabase_url=secrets_dict.get('supabase_url', ''),
             supabase_service_key=secrets_dict.get('supabase_service_key', ''),
@@ -136,29 +140,33 @@ class SecretsManager:
             True if required secrets are valid
         """
         required_fields = [
-            'polygon_private_key',
             'polymarket_api_key',
             'polymarket_api_secret',
             'tomorrow_io_api_key',
         ]
-        
+
         for field in required_fields:
             value = getattr(secrets, field)
             if not value or len(value) < 10:
                 logger.error(f"Invalid or missing secret: {field}")
                 return False
-        
+
+        # Private key is required (signs every order)
+        if not secrets.polygon_private_key:
+            logger.error("polygon_private_key is required for order signing")
+            return False
+
         # Supabase is optional
         if require_supabase:
             if not secrets.supabase_url or not secrets.supabase_service_key:
                 logger.error("Supabase credentials required but not found")
                 return False
-        
+
         # Validate private key format
         if not secrets.polygon_private_key.startswith('0x'):
             logger.error("Polygon private key must start with 0x")
             return False
-        
+
         if len(secrets.polygon_private_key) != 66:
             logger.error("Polygon private key should be 66 characters (0x + 64 hex)")
             return False
