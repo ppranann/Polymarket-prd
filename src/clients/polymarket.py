@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 # Try to import py-clob-client for live order placement
 try:
     from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import OrderArgs, OrderType, BUY, SELL
+    from py_clob_client.clob_types import OrderArgs, OrderType
     CLOB_AVAILABLE = True
 except ImportError:
     CLOB_AVAILABLE = False
@@ -258,12 +258,11 @@ class PolymarketClient:
             raise ValueError(f"Missing CLOB token ID for market {market_id}")
 
         try:
-            side_const = BUY if side.upper() == "BUY" else SELL
             order_args = OrderArgs(
                 token_id=token_id,
                 price=price,
                 size=size,
-                side=side_const,
+                side=side.upper(),  # "BUY" or "SELL"
             )
             signed_order = await asyncio.to_thread(self._clob.create_order, order_args)
             resp = await asyncio.to_thread(self._clob.post_order, signed_order, OrderType.GTC)
@@ -302,12 +301,11 @@ class PolymarketClient:
             raise ValueError(f"Missing CLOB token ID for market {market_id}")
 
         try:
-            side_const = BUY if side.upper() == "BUY" else SELL
             order_args = OrderArgs(
                 token_id=token_id,
                 price=price or 0.5,
                 size=size,
-                side=side_const,
+                side=side.upper(),  # "BUY" or "SELL"
             )
             signed_order = await asyncio.to_thread(self._clob.create_order, order_args)
             resp = await asyncio.to_thread(self._clob.post_order, signed_order, OrderType.GTC)
