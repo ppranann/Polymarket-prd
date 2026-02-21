@@ -634,13 +634,19 @@ class AuditLogger:
                     continue
                 seen.add(mid)
                 entry_price = float(row.get("market_price") or 0)
-                size = float(row.get("trade_size") or 0)
-                if entry_price <= 0 or size <= 0:
+                shares = float(row.get("trade_size") or 0)
+                if entry_price <= 0 or shares <= 0:
+                    continue
+                # trade_size stores SHARES (order.size), not USDC.
+                # Convert: usdc_size = shares × entry_price
+                usdc_size = round(shares * entry_price, 4)
+                if usdc_size <= 0 or usdc_size > 50:
+                    logger.warning(f"Skipping recovery of {mid[:8]}: computed usdc=${usdc_size:.2f} out of range (shares={shares:.2f}, price={entry_price:.4f})")
                     continue
                 open_positions.append({
                     "market_id": mid,
                     "entry_price": entry_price,
-                    "size": size,
+                    "size": usdc_size,
                     "entry_alpha": float(row.get("alpha") or 0),
                     "opened_at": row.get("created_at"),
                 })
