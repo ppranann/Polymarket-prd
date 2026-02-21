@@ -336,7 +336,15 @@ class PolymarketClient:
             resp = await asyncio.to_thread(self._clob.post_order, signed_order, OrderType.FOK)
 
             order_id = resp.get('orderID', resp.get('id', 'unknown')) if isinstance(resp, dict) else str(resp)
-            self._logger.info(f"LIVE MARKET ORDER (FOK): {side} ${size:.2f} on {market_id[:8]}... (orderID: {order_id})")
+            status = resp.get('status', '') if isinstance(resp, dict) else ''
+
+            # FOK orders that can't fill are returned with status 'unmatched' —
+            # they are immediately cancelled and nothing is sold on Polymarket.
+            # Raise so execute_exit() marks executed=False and skips the Supabase EXIT log.
+            if status not in ('matched', 'delayed', ''):
+                raise Exception(f"FOK order not filled on Polymarket (status: '{status}', orderID: {order_id})")
+
+            self._logger.info(f"LIVE MARKET ORDER (FOK): {side} ${size:.2f} on {market_id[:8]}... (status: {status}, orderID: {order_id})")
 
             return MockOrder(
                 order_id=order_id,
