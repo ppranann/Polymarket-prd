@@ -275,6 +275,10 @@ class TradingBot:
                 f"({len(bought_ids)} bought, {len(exited_ids)} exited)"
             )
 
+        # Recover open positions from Supabase so the bot can manage them
+        # (apply stop-loss, track P&L) even after a container restart.
+        await self._recover_open_positions()
+
         # Initialize Resolution Tracker
         self._resolution_tracker = ResolutionTracker(self._logger)
         
@@ -857,8 +861,32 @@ class TradingBot:
 
         logger.critical("Trading halted - manual intervention required")
 
+    async def _recover_open_positions(self):
+        """Reload open positions from Supabase after container restart."""
+        try:
+            open_positions = await self._logger.get_open_positions(days=3)
+            if not open_positions:
+                logger.info("No open positions to recover from Supabase")
+                return
+
+            recovered = 0
+            for pos_data in open_positions:
+                success = self._risk_manager.recover_position(
+                    market_id=pos_data["market_id"],
+                    entry_price=pos_data["entry_price"],
+                    size=pos_data["size"],
+                    opened_at=pos_data["opened_at"],
+                    entry_alpha=pos_data["entry_alpha"],
+                )
+                if success:
+                    recovered += 1
+
+            logger.info(f"Position recovery complete: {recovered}/{len(open_positions)} position(s) restored")
+        except Exception as e:
+            logger.error(f"Position recovery failed: {e}")
+
     async def _check_auto_exits(self):
-        """Check and execute auto-exits for profitable positions"""
+        """Check positions for stop-loss conditions and cash out losers via market sell."""
         positions = self._risk_manager.positions
         
         if not positions:

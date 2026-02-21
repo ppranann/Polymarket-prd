@@ -476,7 +476,59 @@ class RiskManager:
         logger.info(f"Opened position: {outcome} {size} @ ${price} on {market_id} (alpha=${entry_alpha:.2f})")
 
         return position
-    
+
+    def recover_position(
+        self,
+        market_id: str,
+        entry_price: float,
+        size: float,
+        opened_at,
+        entry_alpha: float = 0.0,
+    ) -> bool:
+        """
+        Inject a previously opened position back into memory after a restart.
+        Skips normal validation — this trade already happened and is in Supabase.
+
+        Returns:
+            True if recovered, False if skipped (already tracked or bad data)
+        """
+        if market_id in self._positions:
+            return False
+
+        if entry_price <= 0 or size <= 0:
+            logger.warning(f"Skipping recovery of {market_id[:8]}: invalid price/size")
+            return False
+
+        if isinstance(opened_at, str):
+            try:
+                opened_at = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+            except Exception:
+                opened_at = datetime.now()
+
+        position = Position(
+            market_id=market_id,
+            outcome="YES",
+            size=size,
+            avg_price=entry_price,
+            current_price=entry_price,
+            opened_at=opened_at,
+            last_updated=datetime.now(),
+            peak_pnl_percentage=0.0,
+            entry_alpha=entry_alpha,
+            event_key="",
+            market_type="bucket",
+        )
+
+        self._positions[market_id] = position
+        self._current_capital = max(0.0, self._current_capital - size)
+
+        logger.info(
+            f"Recovered position: {market_id[:8]}... "
+            f"entry=${entry_price:.4f}, size=${size:.2f}, "
+            f"opened={opened_at}"
+        )
+        return True
+
     def update_position(
         self,
         market_id: str,

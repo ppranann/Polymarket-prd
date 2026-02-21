@@ -591,6 +591,68 @@ class AuditLogger:
             logger.error(f"Failed to get daily summary: {e}")
             return {"error": str(e)}
     
+    async def get_open_positions(self, days: int = 3) -> list:
+        """
+        Recover open positions on startup by finding BUY trades with no matching EXIT.
+
+        Returns:
+            List of dicts: {market_id, entry_price, size, entry_alpha, opened_at}
+        """
+        if not self._connected or not self._client:
+            return []
+
+        try:
+            from datetime import timedelta
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+            table = f"{self.table_prefix}audit_log"
+
+            buys = (
+                self._client.table(table)
+                .select("market_id, market_price, trade_size, alpha, created_at")
+                .eq("event_type", "TRADE")
+                .eq("action", "BUY")
+                .eq("status", "SUCCESS")
+                .gte("created_at", cutoff)
+                .execute()
+            )
+
+            exits = (
+                self._client.table(table)
+                .select("market_id")
+                .eq("event_type", "EXIT")
+                .gte("created_at", cutoff)
+                .execute()
+            )
+
+            exited_ids = {row["market_id"] for row in exits.data if row.get("market_id")}
+
+            open_positions = []
+            seen = set()
+            for row in sorted(buys.data, key=lambda x: x.get("created_at", ""), reverse=True):
+                mid = row.get("market_id")
+                if not mid or mid in exited_ids or mid in seen:
+                    continue
+                seen.add(mid)
+                entry_price = float(row.get("market_price") or 0)
+                size = float(row.get("trade_size") or 0)
+                if entry_price <= 0 or size <= 0:
+                    continue
+                open_positions.append({
+                    "market_id": mid,
+                    "entry_price": entry_price,
+                    "size": size,
+                    "entry_alpha": float(row.get("alpha") or 0),
+                    "opened_at": row.get("created_at"),
+                })
+
+            if open_positions:
+                logger.info(f"Found {len(open_positions)} open position(s) in Supabase to recover")
+            return open_positions
+
+        except Exception as e:
+            logger.warning(f"Could not recover open positions from Supabase: {e}")
+            return []
+
     async def get_recently_bought_market_ids(self, days: int = 7) -> list:
         """
         Fetch market IDs that had BUY trades in the last N days.

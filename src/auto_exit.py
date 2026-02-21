@@ -115,68 +115,37 @@ class AutoExitManager:
             # Update position with current price (also updates peak_pnl)
             self.risk.update_position(market_id, current_price)
 
-            # Check 1: PROFIT_TARGET — take profit when position has doubled.
-            # For $0.08 entry → fires at $0.16+. Captures market repricing toward
-            # fair value before resolution, locking in realized gains.
-            if position.pnl_percentage >= 100:
-                signal = self._create_exit_signal(
-                    position=position,
-                    current_price=current_price,
-                    exit_type="PROFIT_TARGET",
-                    reason=(
-                        f"Profit target: {position.pnl_percentage:.1f}% gain "
-                        f"(entry ${position.avg_price:.3f} → ${current_price:.3f})"
-                    )
-                )
-                exit_signals.append(signal)
-                continue
+            # PROFIT_TARGET and TRAILING_STOP disabled:
+            # Strategy = hold winning positions to resolution for full $1.00 payout.
+            # Weather markets resolve within 24h — no need to sell early at a discount
+            # into a thin order book when we can just collect $1.00 at settlement.
 
-            # Check 2: TRAILING_STOP — let big winners run further.
-            # Only engages after 50%+ peak gain; exits if drops 25% from peak.
-            # Wider than before (was: peak>=30, drop>=15) to avoid noise exits.
-            if position.pnl_percentage >= 30 and position.peak_pnl_percentage >= 50:
-                drop_from_peak = position.peak_pnl_percentage - position.pnl_percentage
-                if drop_from_peak >= 25:
-                    signal = self._create_exit_signal(
-                        position=position,
-                        current_price=current_price,
-                        exit_type="TRAILING_STOP",
-                        reason=(
-                            f"Trailing stop: {position.pnl_percentage:.1f}% "
-                            f"(peak was {position.peak_pnl_percentage:.1f}%, "
-                            f"drop: -{drop_from_peak:.1f}%)"
-                        )
-                    )
-                    exit_signals.append(signal)
-                    continue
-
-            # Check 3: RISK_EXIT — all markets get a stop loss, thresholds differ.
-            # Expensive markets (>= $0.20): tighter -20% stop.
-            # Cheap markets (< $0.20): wider -50% stop to absorb bid-ask noise
-            # (a $0.01 move on a $0.05 entry is -20% — normal spread noise).
-            # -50% means the market moved meaningfully against our model.
+            # RISK_EXIT only: cash out losing positions immediately via market sell.
+            # This avoids holding to $0.00 when the market has clearly moved against us.
+            # Cheap markets (< $0.20): exit at -60% — needs a meaningful move, not noise.
+            # Expensive markets (>= $0.20): exit at -25% — tighter since more liquid.
             if position.avg_price >= 0.20:
-                if position.pnl_percentage < -20:
+                if position.pnl_percentage < -25:
                     signal = self._create_exit_signal(
                         position=position,
                         current_price=current_price,
                         exit_type="RISK_EXIT",
                         reason=(
-                            f"Risk exit: down {position.pnl_percentage:.1f}% "
-                            f"(entry ${position.avg_price:.3f}, expensive market)"
+                            f"Cash out: down {position.pnl_percentage:.1f}% "
+                            f"(entry ${position.avg_price:.3f}, market moved against us)"
                         )
                     )
                     exit_signals.append(signal)
                     continue
             else:
-                if position.pnl_percentage < -50:
+                if position.pnl_percentage < -60:
                     signal = self._create_exit_signal(
                         position=position,
                         current_price=current_price,
                         exit_type="RISK_EXIT",
                         reason=(
-                            f"Risk exit: down {position.pnl_percentage:.1f}% "
-                            f"(entry ${position.avg_price:.3f}, cheap market stop)"
+                            f"Cash out: down {position.pnl_percentage:.1f}% "
+                            f"(entry ${position.avg_price:.3f}, market moved against us)"
                         )
                     )
                     exit_signals.append(signal)
