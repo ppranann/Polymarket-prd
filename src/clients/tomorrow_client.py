@@ -58,20 +58,35 @@ class TomorrowClient:
     """
     BASE_URL = "https://api.tomorrow.io/v4"
 
-    # Bulletproof mapping to the EXACT weather stations Polymarket uses
+    # Bulletproof mapping to the EXACT weather stations Polymarket uses.
+    # Polymarket London questions reference "Heathrow" explicitly — use LHR coords.
+    # NYC questions resolve against Central Park (standard US climate reference).
+    # Seoul/Incheon questions use Incheon International Airport.
     COORD_MAP = {
-        # London City Airport (EGLC) - precise for London markets
-        "london": "51.5028,-0.0551",
-        "heathrow": "51.5028,-0.0551",
+        # Heathrow Airport (EGLL / LHR) — primary London Polymarket station
+        "london": "51.4775,-0.4614",
+        "heathrow": "51.4775,-0.4614",
 
-        # Incheon Intl Airport (RKSI) - used for Seoul/Incheon markets
-        "incheon": "37.4602,126.4407",
-        "seoul": "37.4602,126.4407",
+        # Incheon Intl Airport (RKSI) — used for Seoul/Incheon markets
+        "incheon": "37.4691,126.4505",
+        "seoul": "37.4691,126.4505",
 
-        # Central Park Station - precise for NYC markets
-        "nyc": "40.7128,-74.0060",
-        "new-york": "40.7128,-74.0060",
-        "new york": "40.7128,-74.0060",
+        # Central Park weather station — standard NYC climate reference
+        "nyc": "40.7789,-73.9692",
+        "new-york": "40.7789,-73.9692",
+        "new york": "40.7789,-73.9692",
+    }
+
+    # Per-city IANA timezone — passed to Tomorrow.io so daily grouping uses
+    # local midnight instead of UTC midnight (critical for Seoul UTC+9 / London UTC±0).
+    TIMEZONE_MAP = {
+        "london": "Europe/London",
+        "heathrow": "Europe/London",
+        "incheon": "Asia/Seoul",
+        "seoul": "Asia/Seoul",
+        "nyc": "America/New_York",
+        "new-york": "America/New_York",
+        "new york": "America/New_York",
     }
 
     def __init__(
@@ -239,11 +254,16 @@ class TomorrowClient:
             return None
 
         endpoint = f"{self.BASE_URL}/timelines"
+        # Use the city's local timezone so Tomorrow.io groups hours into the
+        # correct local calendar day (Seoul is UTC+9; without this, the first
+        # 9h of the local day fall on the previous UTC date).
+        city_timezone = self.TIMEZONE_MAP.get(city_slug, "UTC")
         params = {
             "location": location,
             "timesteps": timesteps,
             "apikey": self.api_key,
             "units": units,
+            "timezone": city_timezone,
         }
         if fields:
             params["fields"] = ",".join(fields)

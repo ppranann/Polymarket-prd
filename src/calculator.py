@@ -69,28 +69,32 @@ class FairPriceCalculator:
     # Default sigma in Fahrenheit (3.5°F = 1.9°C) - used as fallback
     DEFAULT_SIGMA_FAHRENHEIT = 3.5
 
-    # Dynamic sigma by forecast horizon (days out)
-    # Shifted up ~0.5°F for conservatism: "the world is noisier than a toy normal"
+    # Dynamic sigma by forecast horizon (days out), in °F.
+    # Values deliberately wide: the model should only signal when the edge is
+    # unambiguous.  Tight sigma (2-5°F) was generating too many false positives
+    # on markets that simply had thin orderbooks, not genuine mispricing.
+    # Doubled values reduce false positives significantly.
     SIGMA_BY_HORIZON = {
-        0: 2.5,   # Same-day: tight but admits forecast error
-        1: 3.5,   # 1 day out: moderate uncertainty
-        2: 4.5,   # 2 days out: wider
-        3: 5.5,   # 3 days out: even wider
+        0: 4.0,   # Same-day: ~2°C measurement + station mismatch error
+        1: 6.0,   # 1 day out: wider forecast + resolution uncertainty
+        2: 8.0,   # 2 days out
+        3: 10.0,  # 3 days out: NWP skill degrades rapidly beyond 48h
     }
 
-    # Calibrated forecast error by lead time (hours).
-    # bias = mean(forecast - actual), sigma = std(forecast - actual).
-    # Positive bias means forecast runs hot → subtract from forecast.
-    # These should be tuned from historical forecast-vs-actual data.
+    # Calibrated forecast error by lead time (hours), in °F.
+    # bias = mean(forecast - actual); positive → forecast runs hot.
+    # sigma = std(forecast - actual) PLUS station-mismatch uncertainty.
+    # Old values (2-5°F) were too tight — real-world daily-max errors are
+    # 2-5°C (3.6-9°F) when you add station location + model systematic error.
     FORECAST_ERROR = {
-        0:  {"bias": 0.0, "sigma": 2.0},   # Same-day
-        24: {"bias": 0.0, "sigma": 3.0},   # 1 day out
-        48: {"bias": 0.5, "sigma": 4.0},   # 2 days out
-        72: {"bias": 0.5, "sigma": 5.0},   # 3 days out
+        0:  {"bias": 0.0, "sigma": 4.0},   # Same-day: was 2.0°F
+        24: {"bias": 0.0, "sigma": 6.0},   # 1 day out: was 3.0°F
+        48: {"bias": 0.5, "sigma": 8.0},   # 2 days out: was 4.0°F
+        72: {"bias": 0.5, "sigma": 10.0},  # 3 days out: was 5.0°F
     }
 
-    # Extra sigma for range/bucket markets to fatten tails
-    RANGE_SIGMA_ADDON = 1.0
+    # Extra sigma for range/bucket markets to account for even wider tail risk
+    RANGE_SIGMA_ADDON = 2.0  # was 1.0
 
     # Default expected temperature (historical average)
     DEFAULT_EXPECTED_TEMP = 65.0

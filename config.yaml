@@ -109,5 +109,5 @@ health:
 
 development:
   dry_run: false
-  paper_trading: false            # LIVE trading
+  paper_trading: true             # PAPER mode: validate model before risking real money
   log_all_requests: false

@@ -141,6 +141,20 @@ class PolymarketClient:
                     self._logger.info("Derived API credentials from private key")
 
                 self._clob.set_api_creds(api_creds)
+
+                # Set ERC-1155 conditional token approvals so the CLOB exchange
+                # contract can transfer YES tokens on SELL orders.  Without this
+                # every SELL returns 400 "not enough balance / allowance".
+                # Must be called once per key/proxy pair; the approval is on-chain.
+                try:
+                    self._clob.update_allowances()
+                    self._logger.info("Token allowances set — SELL orders enabled")
+                except Exception as allow_err:
+                    self._logger.warning(
+                        f"update_allowances() failed: {allow_err} — "
+                        f"SELL orders may fail with allowance error"
+                    )
+
                 mode = "proxy wallet" if use_proxy else "EOA"
                 self._logger.info(f"CLOB client initialized for LIVE order placement ({mode} mode)")
             except Exception as e:
