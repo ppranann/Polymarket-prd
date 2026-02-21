@@ -290,7 +290,7 @@ class ConfigLoader:
                 circuit_breaker_close_all=risk_cfg.get('circuit_breaker_close_all', False),
                 max_trade_size_pct=risk_cfg.get('max_trade_size_pct', 0.10),
                 kelly_scale=risk_cfg.get('kelly_scale', 0.25),
-                min_trade_size=risk_cfg.get('min_trade_size', 0.50)
+                min_trade_size=risk_cfg.get('min_trade_size', 1.00)
             ),
             farming=FarmingConfig(
                 enabled=farming_cfg['enabled'],

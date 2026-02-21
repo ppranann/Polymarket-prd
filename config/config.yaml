@@ -44,6 +44,7 @@ risk:
   max_open_positions: 3            # Diversification limit (smaller for $30)
   position_concentration: 0.20     # Max 20% concentration
   profit_target: 1.0               # 100% profit = auto-exit
+  min_trade_size: 1.00             # Minimum trade size in USD (no dust trades)
 
 # Farming Parameters (Liquidity Rewards)
 farming:
