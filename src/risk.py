@@ -134,10 +134,12 @@ class RiskManager:
     
     @property
     def capital(self) -> float:
-        """Get current available capital"""
-        # Subtract value of open positions
-        positions_value = sum(p.current_value for p in self._positions.values())
-        return self._capital - positions_value
+        """Get current available capital (cash not yet invested)"""
+        # Subtract cost basis of open positions, NOT current market value.
+        # Market value fluctuates with price — that's unrealized P&L, not cash.
+        # Cash locked up = what was originally spent, regardless of current price.
+        positions_cost = sum(p.size for p in self._positions.values())
+        return self._capital - positions_cost
     
     @property
     def total_exposure(self) -> float:
