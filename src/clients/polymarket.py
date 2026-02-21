@@ -1,9 +1,19 @@
 import logging
 import json
+import asyncio
 import aiohttp
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+# Try to import py-clob-client for live order placement
+try:
+    from py_clob_client.client import ClobClient
+    from py_clob_client.clob_types import OrderArgs, OrderType, BUY, SELL
+    CLOB_AVAILABLE = True
+except ImportError:
+    CLOB_AVAILABLE = False
+
 
 @dataclass
 class Market:
@@ -18,6 +28,7 @@ class Market:
     volume: float
     description: str = ""
     liquidity_rewards_enabled: bool = False
+    clob_token_id: str = ""  # YES token ID for CLOB order placement
 
 @dataclass
 class Order:
@@ -47,7 +58,6 @@ class MockOrder:
 
     def __getitem__(self, key):
         """Support dict-style access for compatibility with executor."""
-        # Map camelCase API keys to snake_case attributes
         key_mapping = {
             "orderID": "order_id",
             "order_id": "order_id",
@@ -70,18 +80,52 @@ class MockOrder:
         except KeyError:
             return default
 
+
 class PolymarketClient:
     def __init__(self, **kwargs):
-        self._api_key = kwargs.get('api_key')
+        self._api_key = kwargs.get('api_key', '')
+        self._paper_trading = kwargs.get('paper_trading', True)
         self.GAMMA_URL = "https://gamma-api.polymarket.com"
+        self.CLOB_URL = "https://clob.polymarket.com"
         self._logger = logging.getLogger(__name__)
-        
+
+        # Extract credentials from secrets/config
+        self._private_key = ''
+        self._chain_id = 137
+        secrets = kwargs.get('secrets')
+        if secrets:
+            self._private_key = getattr(secrets, 'polygon_private_key', '')
+        config = kwargs.get('config')
+        if config:
+            self._chain_id = getattr(config, 'chain_id', 137)
+
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         self._session = aiohttp.ClientSession(headers=headers)
+
+        # Cache: market_id -> clob_token_id (populated during market discovery)
+        self._token_id_map: Dict[str, str] = {}
+
+        # Initialize real CLOB client for live trading
+        self._clob = None
+        if not self._paper_trading and self._private_key and CLOB_AVAILABLE:
+            try:
+                self._clob = ClobClient(
+                    host=self.CLOB_URL,
+                    key=self._private_key,
+                    chain_id=self._chain_id,
+                    signature_type=0,  # EOA (standard wallet)
+                )
+                api_creds = self._clob.create_or_derive_api_creds()
+                self._clob.set_api_creds(api_creds)
+                self._logger.info("CLOB client initialized for LIVE order placement")
+            except Exception as e:
+                self._logger.error(f"Failed to initialize CLOB client: {e}")
+                self._clob = None
+
         self._logger.info("PolymarketClient initialized")
 
     async def get_price(self, market_id: str) -> float:
-        """Fixes the 'missing get_price' error by returning the current Yes price."""
+        """Get current YES price via Gamma API."""
         url = f"{self.GAMMA_URL}/markets/{market_id}"
         try:
             async with self._session.get(url) as resp:
@@ -97,106 +141,76 @@ class PolymarketClient:
 
     async def get_markets(
         self,
-        categories: Optional[List[str]] = None,
+        categories=None,
         limit: int = 1000,
-        query: Optional[str] = None
+        query=None
     ) -> List[Market]:
         """
         Slug-based Discovery: Fetches weather markets by predictable slug pattern.
-        
-        Strategy:
-        - Polymarket creates weather markets with predictable naming pattern
-        - Pattern: highest-temperature-in-{city}-on-{month}-{day}
-        - Fetch each slug directly via /events/slug/{slug}
-        - Extract nested markets and filter for active buckets
-        
-        This approach is MORE RELIABLE than Tag 84 which returns wrong results.
         """
         from datetime import datetime, timedelta
-        
-        # Target cities for weather markets
+
         target_cities = ['london', 'seoul', 'incheon', 'new-york', 'nyc']
-        
-        # Generate slugs for today + next 2 days
+
         slugs_to_fetch = []
         for i in range(3):  # Today, tomorrow, day after
             date = datetime.utcnow() + timedelta(days=i)
-            date_str = date.strftime('%B-%-d-%Y').lower()  # "february-7-2026"
+            date_str = date.strftime('%B-%-d-%Y').lower()
             for city in target_cities:
                 slugs_to_fetch.append(f"highest-temperature-in-{city}-on-{date_str}")
-        
+
         weather_markets = []
-        fetched_count = 0
-        
-        # Use logger instead of print to save storage
+
         self._logger.info("Fetching weather markets via slug-based discovery...")
-        
+
         for slug in slugs_to_fetch:
             try:
                 url = f"{self.GAMMA_URL}/events/slug/{slug}"
                 async with self._session.get(url) as resp:
                     if resp.status != 200:
                         continue
-                    
+
                     event = await resp.json()
-                    fetched_count += 1
-                    
-                    city = slug.split('-in-')[1].split('-on-')[0] if '-in-' in slug else 'unknown'
-                    
-                    # Iterate through NESTED markets array
+
                     for market in event.get('markets', []):
-                        # Skip if not accepting orders or already closed
                         if not market.get('acceptingOrders', True):
                             continue
                         if market.get('closed', False):
                             continue
-                        
+
                         try:
-                            # Convert gamma market to our Market format
                             converted = self._convert_gamma_market(market, event)
                             weather_markets.append(converted)
                         except Exception as e:
                             self._logger.warning(f"Failed to convert market: {e}")
                             continue
-                            
+
             except Exception as e:
                 self._logger.debug(f"Slug {slug} not found or error: {e}")
                 continue
-        
+
         self._logger.info(f"Discovery complete: {len(weather_markets)} temperature buckets found")
         return weather_markets
 
     def _convert_gamma_market(self, market: Dict, event: Dict) -> Market:
-        """
-        Convert a Gamma market object to our Market format.
-        
-        Args:
-            market: Individual market from event.markets array
-            event: Parent event object for context
-            
-        Returns:
-            Market object
-        """
-        # Parse outcome prices
         raw_prices = market.get('outcomePrices', '["0.5", "0.5"]')
-        if isinstance(raw_prices, str):
-            try:
-                prices = json.loads(raw_prices)
-            except:
-                prices = [0.5, 0.5]
-        else:
-            prices = raw_prices
-        
+        prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
         yes_p = float(prices[0]) if (prices and len(prices) > 0) else 0.5
-        
-        # Build descriptive question from groupItemTitle
-        group_title = market.get('groupItemTitle', '')
-        event_title = event.get('title', 'Unknown')
-        question = f"{event_title} - {group_title}" if group_title else event_title
-        
+
+        # Extract YES token ID for CLOB order placement
+        raw_token_ids = market.get('clobTokenIds', '[]')
+        token_ids = json.loads(raw_token_ids) if isinstance(raw_token_ids, str) else (raw_token_ids or [])
+        clob_token_id = str(token_ids[0]) if token_ids else ''
+
+        market_id = market.get('id', '')
+
+        # Cache the mapping so place_limit_order can look it up by market_id
+        if clob_token_id:
+            self._token_id_map[market_id] = clob_token_id
+
         return Market(
-            id=str(market.get('id', '')),
-            question=question,
+            id=market_id,
+            question=market.get('question', event.get('title', '')),
             condition_id=market.get('conditionId', event.get('id', '')),
             yes_price=yes_p,
             no_price=round(1.0 - yes_p, 4),
@@ -205,51 +219,129 @@ class PolymarketClient:
             category='weather',
             volume=float(market.get('volume', 0) or 0),
             description=market.get('description', event.get('description', '')),
-            liquidity_rewards_enabled=market.get('liquidityRewardsEnabled', False)
+            liquidity_rewards_enabled=market.get('liquidityRewardsEnabled', False),
+            clob_token_id=clob_token_id,
         )
 
     async def cancel_all_orders(self, *args, **kwargs):
-        """Fixes the 'object has no attribute' error during shutdown."""
-        self._logger.info("Cleanup: All pending paper orders cancelled.")
+        """Cancel all open orders."""
+        if self._paper_trading or self._clob is None:
+            self._logger.info("Cleanup: All pending paper orders cancelled.")
+            return True
+        try:
+            await asyncio.to_thread(self._clob.cancel_all)
+            self._logger.info("LIVE: All open orders cancelled.")
+        except Exception as e:
+            self._logger.warning(f"cancel_all_orders error: {e}")
         return True
 
     async def place_limit_order(self, market_id: str, side: str, price: float, size: float, **kwargs):
         """
-        Mock hand for PAPER trading. **kwargs catches 'post_only' and stops the crash.
-        Returns MockOrder object instead of dict for proper attribute access.
+        Place a limit order.
+        - Paper mode: returns MockOrder (no real submission)
+        - Live mode: signs and submits via Polymarket CLOB API
         """
-        self._logger.debug(f"PAPER ORDER: {side.upper()} {size} @ ${price} on {market_id}")
-        return MockOrder(
-            order_id=f"mock-paper-{market_id[:8]}",
-            market_id=market_id,
-            side=side,
-            price=price,
-            size=size
-        )
+        if self._paper_trading or self._clob is None:
+            self._logger.debug(f"PAPER ORDER: {side.upper()} {size} @ ${price} on {market_id}")
+            return MockOrder(
+                order_id=f"mock-paper-{market_id[:8]}",
+                market_id=market_id,
+                side=side,
+                price=price,
+                size=size
+            )
+
+        # Look up the YES token ID (needed by CLOB API)
+        token_id = self._token_id_map.get(market_id, '')
+        if not token_id:
+            self._logger.error(f"No clobTokenId found for market {market_id[:8]} — cannot place order")
+            raise ValueError(f"Missing CLOB token ID for market {market_id}")
+
+        try:
+            side_const = BUY if side.upper() == "BUY" else SELL
+            order_args = OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=size,
+                side=side_const,
+            )
+            signed_order = await asyncio.to_thread(self._clob.create_order, order_args)
+            resp = await asyncio.to_thread(self._clob.post_order, signed_order, OrderType.GTC)
+
+            order_id = resp.get('orderID', resp.get('id', 'unknown')) if isinstance(resp, dict) else str(resp)
+            self._logger.info(
+                f"LIVE ORDER submitted: {side} ${size:.2f} @ ${price:.4f} "
+                f"on {market_id[:8]}... (orderID: {order_id})"
+            )
+
+            return MockOrder(
+                order_id=order_id,
+                market_id=market_id,
+                side=side,
+                price=price,
+                size=size
+            )
+        except Exception as e:
+            self._logger.error(f"LIVE order placement failed for {market_id[:8]}: {e}")
+            raise
 
     async def place_market_order(self, market_id: str, side: str, size: float, price: float = None, **kwargs):
-        """
-        Mock market order for PAPER trading (instant execution).
-        For paper mode, this is the same as limit order but represents instant fill.
-        """
-        self._logger.debug(f"PAPER MARKET ORDER: {side.upper()} {size} @ market on {market_id}")
-        return MockOrder(
-            order_id=f"mock-market-{market_id[:8]}",
-            market_id=market_id,
-            side=side,
-            price=price or 0.5,  # Use provided price or default
-            size=size
-        )
+        """Place a market order (used for exits). GTC in live mode."""
+        if self._paper_trading or self._clob is None:
+            self._logger.debug(f"PAPER MARKET ORDER: {side.upper()} {size} @ market on {market_id}")
+            return MockOrder(
+                order_id=f"mock-market-{market_id[:8]}",
+                market_id=market_id,
+                side=side,
+                price=price or 0.5,
+                size=size
+            )
+
+        token_id = self._token_id_map.get(market_id, '')
+        if not token_id:
+            raise ValueError(f"Missing CLOB token ID for market {market_id}")
+
+        try:
+            side_const = BUY if side.upper() == "BUY" else SELL
+            order_args = OrderArgs(
+                token_id=token_id,
+                price=price or 0.5,
+                size=size,
+                side=side_const,
+            )
+            signed_order = await asyncio.to_thread(self._clob.create_order, order_args)
+            resp = await asyncio.to_thread(self._clob.post_order, signed_order, OrderType.GTC)
+
+            order_id = resp.get('orderID', resp.get('id', 'unknown')) if isinstance(resp, dict) else str(resp)
+            self._logger.info(f"LIVE MARKET ORDER: {side} ${size:.2f} on {market_id[:8]}... (orderID: {order_id})")
+
+            return MockOrder(
+                order_id=order_id,
+                market_id=market_id,
+                side=side,
+                price=price or 0.5,
+                size=size
+            )
+        except Exception as e:
+            self._logger.error(f"LIVE market order failed for {market_id[:8]}: {e}")
+            raise
 
     async def get_order_book(self, token_id: str):
-        """Mock order book to allow farming logic to calculate midpoints."""
-        # Returns a dummy spread so the farming logic doesn't crash
+        """Mock order book — used by farming logic."""
         return {"bids": [{"price": "0.50", "size": "100"}], "asks": [{"price": "0.52", "size": "100"}]}
 
     async def cancel_order(self, order_id: str) -> bool:
-        """Cancel an order. For paper trading, always returns success."""
-        self._logger.debug(f"PAPER CANCEL: Order {order_id}")
-        return True
+        """Cancel a specific order."""
+        if self._paper_trading or self._clob is None:
+            self._logger.debug(f"PAPER CANCEL: Order {order_id}")
+            return True
+        try:
+            await asyncio.to_thread(self._clob.cancel, {"orderID": order_id})
+            self._logger.info(f"LIVE: Cancelled order {order_id}")
+            return True
+        except Exception as e:
+            self._logger.warning(f"cancel_order {order_id} failed: {e}")
+            return False
 
     def from_gamma_event(self, event: Dict) -> Market:
         raw_prices = event.get('outcomePrices', '["0.5", "0.5"]')
@@ -257,23 +349,22 @@ class PolymarketClient:
         yes_p = float(prices[0]) if (prices and len(prices) > 0) else 0.5
 
         return Market(
-            id=str(event.get('id', '')),
-            question=event.get('question', '') or event.get('title', 'Unknown'),
-            description=event.get('description', ''),
-            condition_id=event.get('conditionId', ''),
+            id=event.get('id', ''),
+            question=event.get('question', ''),
+            condition_id=event.get('conditionId', event.get('id', '')),
             yes_price=yes_p,
             no_price=round(1.0 - yes_p, 4),
             last_trade_price=yes_p,
-            active=not event.get('closed', False),
-            category=str(event.get('category', 'weather')),
+            active=True,
+            category='weather',
             volume=float(event.get('volume', 0) or 0),
-            liquidity_rewards_enabled=event.get('liquidityRewardsEnabled', False)
         )
 
     async def close(self):
-        if not self._session.closed: await self._session.close()
+        if self._session and not self._session.closed:
+            await self._session.close()
 
-def create_polymarket_client(*args, **kwargs):
-    if len(args) >= 1: kwargs['api_key'] = args[0]
+
+def create_polymarket_client(*args, **kwargs) -> 'PolymarketClient':
+    """Factory function — passes all kwargs straight to PolymarketClient."""
     return PolymarketClient(**kwargs)
-
