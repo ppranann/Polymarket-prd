@@ -19,6 +19,12 @@ CITY_TIMEZONES = {
     "nyc":      "America/New_York",
     "seoul":    "Asia/Seoul",
     "incheon":  "Asia/Seoul",
+    # US cities (NWS data source)
+    "atlanta":  "America/New_York",
+    "miami":    "America/New_York",
+    "seattle":  "America/Los_Angeles",
+    "dallas":   "America/Chicago",
+    "chicago":  "America/Chicago",
 }
 
 
@@ -31,9 +37,15 @@ MONTH_MAP = {
 
 # City patterns for extraction from market questions
 CITY_PATTERNS = {
-    "seoul": ["seoul", "incheon"],
-    "london": ["london", "heathrow"],
-    "nyc": ["new york", "nyc", "new-york"],
+    "seoul":    ["seoul", "incheon"],
+    "london":   ["london", "heathrow"],
+    "nyc":      ["new york", "nyc", "new-york"],
+    # US cities (NWS data source)
+    "atlanta":  ["atlanta"],
+    "miami":    ["miami"],
+    "seattle":  ["seattle"],
+    "dallas":   ["dallas"],
+    "chicago":  ["chicago"],
 }
 
 

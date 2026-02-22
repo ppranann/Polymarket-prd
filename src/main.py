@@ -27,6 +27,7 @@ from .config import load_config, BotConfig
 from .secrets_manager import load_bot_secrets, SecretsManager
 from .clients.polymarket import create_polymarket_client, PolymarketClient
 from .clients.tomorrow_client import create_tomorrow_client, RateLimitConfig
+from .clients.nws_client import create_nws_client, NWSClient, US_CITY_COORDS
 from .calculator import create_calculator, FairPriceCalculator
 from .risk import create_risk_manager, RiskManager
 from .scanner import create_market_scanner, MarketScanner, MarketGroup
@@ -89,6 +90,7 @@ class TradingBot:
         self._secrets = None
         self._polymarket_client = None
         self._weather_client = None
+        self._nws_client: Optional[NWSClient] = None
         self._calculator = None
         self._risk_manager = None
         self._scanner = None
@@ -184,7 +186,12 @@ class TradingBot:
         )
 
         logger.info("Weather client initialized with rate limiting")
-        
+
+        # Initialize NWS client for US cities (free, no API key, no rate limits)
+        logger.info("Initializing NWS client for US cities...")
+        self._nws_client = create_nws_client(cache_ttl_seconds=1800.0)
+        logger.info("NWS client initialized (NYC, Atlanta, Miami, Seattle, Dallas, Chicago)")
+
         # Initialize Calculator
         logger.info("Initializing Fair Price Calculator...")
         self._calculator = create_calculator(
@@ -422,46 +429,50 @@ class TradingBot:
             for group in market_groups:
                 city = group.city
 
-                # Check if city is in cooldown from previous attempts
-                if self._weather_client._is_city_rate_limited(city):
-                    logger.warning(f"Skipping {city} - still in cooldown from previous rate limit.")
-                    skipped_cities.append(city)
-                    continue
-
                 # Check scan-level cache first
                 if city in weather_cache:
                     weather_data = weather_cache[city]
                 else:
-                    # Get location coordinates for this city
-                    location = self._weather_client.COORD_MAP.get(
-                        city, self._weather_client.COORD_MAP["nyc"]
-                    )
+                    # Route US cities to NWS (free, no limits), international to Tomorrow.io
+                    if city in US_CITY_COORDS:
+                        weather_data = await self._nws_client.get_city_weather(city)
+                        if not weather_data:
+                            logger.warning(f"Skipping {city} - NWS data unavailable.")
+                            skipped_cities.append(city)
+                            continue
+                    else:
+                        # Check Tomorrow.io cooldown first
+                        if self._weather_client._is_city_rate_limited(city):
+                            logger.warning(f"Skipping {city} - still in cooldown from previous rate limit.")
+                            skipped_cities.append(city)
+                            continue
 
-                    weather_raw = await self._weather_client.get_city_weather(
-                        city_slug=city,
-                        location=location,
-                        fields=[
-                            "temperature",
-                            "temperatureApparent",
-                            "temperatureMin",
-                            "temperatureMax",
-                            "precipitationProbability",
-                            "weatherCode"
-                        ],
-                        timesteps="1h",
-                    )
+                        location = self._weather_client.COORD_MAP.get(
+                            city, self._weather_client.COORD_MAP["nyc"]
+                        )
+                        weather_raw = await self._weather_client.get_city_weather(
+                            city_slug=city,
+                            location=location,
+                            fields=[
+                                "temperature",
+                                "temperatureApparent",
+                                "temperatureMin",
+                                "temperatureMax",
+                                "precipitationProbability",
+                                "weatherCode"
+                            ],
+                            timesteps="1h",
+                        )
+                        if not weather_raw:
+                            logger.warning(f"Skipping {city} - weather data unavailable.")
+                            skipped_cities.append(city)
+                            continue
 
-                    if not weather_raw:
-                        logger.warning(f"Skipping {city} - weather data unavailable.")
-                        skipped_cities.append(city)
-                        continue
-
-                    weather_data = await self._process_weather_response(weather_raw)
-
-                    if not weather_data:
-                        logger.warning(f"Skipping {city} - could not parse weather data.")
-                        skipped_cities.append(city)
-                        continue
+                        weather_data = await self._process_weather_response(weather_raw)
+                        if not weather_data:
+                            logger.warning(f"Skipping {city} - could not parse weather data.")
+                            skipped_cities.append(city)
+                            continue
 
                     weather_cache[city] = weather_data
 
@@ -964,6 +975,9 @@ class TradingBot:
         # Close connections
         if self._weather_client:
             await self._weather_client.close()
+
+        if self._nws_client:
+            await self._nws_client.close()
         
         if self._logger:
             await self._logger.close()

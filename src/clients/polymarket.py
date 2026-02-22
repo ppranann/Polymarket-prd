@@ -189,7 +189,12 @@ class PolymarketClient:
         """
         from datetime import datetime, timedelta
 
-        target_cities = ['london', 'seoul', 'incheon', 'new-york', 'nyc']
+        target_cities = [
+            # International (Tomorrow.io)
+            'london', 'seoul', 'incheon', 'new-york', 'nyc',
+            # US cities (NWS)
+            'atlanta', 'miami', 'seattle', 'dallas', 'chicago',
+        ]
 
         slugs_to_fetch = []
         for i in range(3):  # Today, tomorrow, day after
