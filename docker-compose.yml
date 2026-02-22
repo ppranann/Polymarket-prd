@@ -20,7 +20,8 @@ services:
       - ./logs:/app/logs
       - ~/.aws:/root/.aws:ro
     restart: unless-stopped
-    command: ["python", "-m", "src.main", "--config", "/app/config.yaml", "--paper"]
+    command: ["python", "-m", "src.main", "--config", "/app/config.yaml"]
+    # To run in LIVE mode: add --live flag above. Without it, bot is always in paper mode.
     logging:
       driver: "json-file"
       options:

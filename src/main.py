@@ -74,17 +74,21 @@ class TradingBot:
     def __init__(
         self,
         config: BotConfig,
-        paper_trading: bool = False
+        live_trading: bool = False
     ):
         """
         Initialize the trading bot.
-        
+
         Args:
             config: Bot configuration
-            paper_trading: Use paper trading mode
+            live_trading: Explicitly opt into live trading (real money).
+                          Default is False — paper mode is always the safe default.
         """
         self.config = config
-        self.paper_trading = paper_trading or config.development.paper_trading
+        # Paper mode is the DEFAULT. Live trading requires an explicit --live flag.
+        # This means a missing flag, stale config, or deployment mistake can NEVER
+        # accidentally trigger real trades.
+        self.paper_trading = not live_trading
         
         # Component placeholders
         self._secrets = None
@@ -1026,20 +1030,20 @@ class TradingBot:
 
 async def run_bot(
     config_path: str = None,
-    paper_trading: bool = False
+    live_trading: bool = False
 ):
     """
     Run the trading bot.
-    
+
     Args:
         config_path: Path to config.yaml
-        paper_trading: Use paper trading mode
+        live_trading: Opt into live trading (default False = paper mode)
     """
     # Load configuration
     config = load_config(config_path)
-    
+
     # Create and initialize bot
-    bot = TradingBot(config=config, paper_trading=paper_trading)
+    bot = TradingBot(config=config, live_trading=live_trading)
     
     try:
         await bot.initialize()
@@ -1056,8 +1060,8 @@ async def run_bot(
 
 def main():
     """Main entry point"""
-    import argparse
-    
+    import argparse  # noqa: PLC0415
+
     parser = argparse.ArgumentParser(description="Polymarket Weather Sniping Bot")
     parser.add_argument(
         "--config",
@@ -1066,22 +1070,27 @@ def main():
         default=None
     )
     parser.add_argument(
-        "--paper",
+        "--live",
         action="store_true",
-        help="Run in paper trading mode",
+        help="Run in LIVE trading mode with real money. Without this flag the bot always runs in paper mode.",
         default=False
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Simulate without actual trading",
-        default=False
-    )
-    
+    # Keep --paper and --dry-run as no-ops for backwards compatibility
+    parser.add_argument("--paper", action="store_true", default=False, help=argparse.SUPPRESS)
+    parser.add_argument("--dry-run", action="store_true", default=False, help=argparse.SUPPRESS)
+
     args = parser.parse_args()
-    
+
+    if args.live:
+        logger.warning("=" * 60)
+        logger.warning("LIVE MODE — REAL MONEY AT RISK")
+        logger.warning("=" * 60)
+    else:
+        logger.info("PAPER MODE (default) — no real trades will be placed")
+
+
     # Run the bot
-    asyncio.run(run_bot(config_path=args.config, paper_trading=args.paper or args.dry_run))
+    asyncio.run(run_bot(config_path=args.config, live_trading=args.live))
 
 
 if __name__ == "__main__":
