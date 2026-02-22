@@ -25,6 +25,11 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 info "Starting deployment process..."
 
+# Pull latest repo files (docker-compose.yml, config, scripts) before deploying.
+# Without this, EC2 runs the old docker-compose.yml even after changes are pushed.
+info "Pulling latest repo files from GitHub..."
+git pull origin main || warn "git pull failed — using existing local files"
+
 # Verify AWS CLI is installed
 if ! command -v aws &> /dev/null; then
     error "AWS CLI not found. Please install it first."

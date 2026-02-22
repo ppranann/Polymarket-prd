@@ -1,6 +1,7 @@
 import logging
 import json
 import asyncio
+import os
 import aiohttp
 import re
 from dataclasses import dataclass, field
@@ -84,7 +85,10 @@ class MockOrder:
 class PolymarketClient:
     def __init__(self, **kwargs):
         self._api_key = kwargs.get('api_key', '')
-        self._paper_trading = kwargs.get('paper_trading', True)
+        # Respect PAPER_TRADING env var as a hard override — prevents real CLOB init
+        # even if paper_trading=False somehow slips through config or CLI args.
+        env_paper = os.environ.get('PAPER_TRADING', '').lower() in ('true', '1', 'yes')
+        self._paper_trading = kwargs.get('paper_trading', True) or env_paper
         self.GAMMA_URL = "https://gamma-api.polymarket.com"
         self.CLOB_URL = "https://clob.polymarket.com"
         self._logger = logging.getLogger(__name__)

@@ -13,6 +13,7 @@ services:
       - AWS_SECRET_NAME=polymarket-bot/production
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - PYTHONPATH=/app
+      - PAPER_TRADING=true   # Safety: blocks real CLOB even if --paper flag is missing
     volumes:
       # Config is baked into the image — no local override needed.
       # Change config.yaml locally, commit, push, and redeploy.
