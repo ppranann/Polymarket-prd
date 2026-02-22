@@ -19,7 +19,7 @@ services:
       - ./logs:/app/logs
       - ~/.aws:/root/.aws:ro
     restart: unless-stopped
-    command: ["python", "-m", "src.main", "--config", "/app/config.yaml"]
+    command: ["python", "-m", "src.main", "--config", "/app/config.yaml", "--paper"]
     logging:
       driver: "json-file"
       options:
