@@ -49,10 +49,10 @@ class SecretsManager:
     def __init__(
         self,
         secret_name: str = "polymarket-bot/production",
-        region_name: str = "us-east-1"
+        region_name: str = None
     ):
         self.secret_name = secret_name
-        self.region_name = region_name
+        self.region_name = region_name or os.environ.get("AWS_DEFAULT_REGION", "eu-west-1")
     
     def get_secret(self) -> Dict[str, str]:
         """
@@ -176,7 +176,7 @@ class SecretsManager:
 
 def get_secrets_manager(
     secret_name: str = "polymarket-bot/production",
-    region_name: str = "us-east-1"
+    region_name: str = None
 ) -> SecretsManager:
     """
     Factory function to create a SecretsManager instance.
@@ -186,7 +186,7 @@ def get_secrets_manager(
 
 def load_bot_secrets(
     secret_name: str = "polymarket-bot/production",
-    region_name: str = "us-east-1",
+    region_name: str = None,
     require_supabase: bool = False
 ) -> BotSecrets:
     """

@@ -7,7 +7,7 @@ on:
 
 env:
   ECR_REPOSITORY: polymarket-weather-bot
-  AWS_REGION: us-east-1
+  AWS_REGION: eu-west-1
 
 jobs:
   build:

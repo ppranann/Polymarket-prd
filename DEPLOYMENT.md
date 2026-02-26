@@ -22,9 +22,7 @@ Complete guide for deploying the Polymarket Weather Trading Bot to AWS EC2.
 ./build.sh
 
 # 3. Deploy (on EC2)
-ssh -i keys/Polymarket-ec2-test.pem ec2-user@<EC2-IP>
-./deploy.sh latest
-```
+./deploy la```
 
 ---
 
@@ -183,8 +181,7 @@ Building Docker images on EC2 t3.micro instances causes **memory exhaustion** du
 SSH to your EC2 instance:
 
 ```bash
-ssh -i keys/Polymarket-ec2-test.pem ec2-user@<EC2-IP>
-```
+./deploy.sh latest
 
 Deploy:
 
