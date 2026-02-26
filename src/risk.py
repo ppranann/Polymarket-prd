@@ -520,7 +520,7 @@ class RiskManager:
         )
 
         self._positions[market_id] = position
-        self._current_capital = max(0.0, self._current_capital - size)
+        self._capital = max(0.0, self._capital - size)
 
         logger.info(
             f"Recovered position: {market_id[:8]}... "
