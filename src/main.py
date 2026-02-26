@@ -638,7 +638,7 @@ class TradingBot:
                 city=group.city,
                 target_date=group.date,
                 condition_type=signal.market_type,
-                threshold_f=signal.distribution_mu,
+                threshold_f=self._calculator.get_temperature_threshold_from_condition(market.question) or signal.distribution_mu,
                 forecast_temp_f=date_weather.temp_max,
                 sigma_used=signal.distribution_sigma,
                 z_score=signal.z_score,
