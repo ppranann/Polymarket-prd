@@ -269,7 +269,7 @@ class AuditLogger:
                     return response.data[0].get("id")
 
             except Exception as e:
-                logger.debug(f"Failed to log to Supabase: {e}")
+                logger.warning(f"Supabase write failed (audit_log): {e}")
         
         # Buffer for later sync
         self._log_buffer.append(log_entry.to_dict())
@@ -293,7 +293,7 @@ class AuditLogger:
                 if response.data:
                     return response.data[0].get("id")
             except Exception as e:
-                logger.debug(f"Failed to log prediction to Supabase: {e}")
+                logger.warning(f"Supabase write failed (predictions): {e}")
 
         # Always log to console for visibility
         logger.info(
