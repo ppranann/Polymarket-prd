@@ -552,6 +552,48 @@ class AlphaDetector:
         if best_bucket_signal and best_bucket_signal.action == "BUY":
             signals.append(best_bucket_signal)
 
+        # --- Step 4: Bucket integrity check (model-free structural arb) ---
+        # Σ P_market(bucket_i) should ≈ 1.0. Significant deviation = arb opportunity.
+        if len(bucket_info) >= 3:
+            already_trading = {s.market_id for s in signals}
+            bucket_sum = sum(info["price"] for info in bucket_info)
+
+            if bucket_sum < 0.92:
+                # Aggregate underpriced → buy cheapest convex bucket not already in signals
+                arb_candidates = [
+                    info for info in bucket_info
+                    if info["market"].id not in already_trading
+                ]
+                if arb_candidates:
+                    best = max(arb_candidates, key=lambda x: x["p_model"] - x["price"])
+                    ev = best["p_model"] - best["price"]
+                    logger.info(
+                        f"BUCKET INTEGRITY: sum={bucket_sum:.3f} < 0.92 (underpriced). "
+                        f"Best arb: {best['range_str']} EV={ev:.3f}"
+                    )
+                    if ev > 0.05:
+                        sig = self.analyze_market(
+                            market_id=best["market"].id,
+                            fair_price=best["p_model"],
+                            market_price=best["price"],
+                            z_score=0.0,
+                            confidence=0.65,
+                        )
+                        sig.market_type = "bucket_arb"
+                        sig.p_model = best["p_model"]
+                        sig.distribution_mu = mu
+                        sig.distribution_sigma = sigma
+                        sig.bucket_range = best["range_str"]
+                        sig.event_key = group.event_key
+                        if sig.action == "BUY":
+                            signals.append(sig)
+
+            elif bucket_sum > 1.08:
+                logger.info(
+                    f"BUCKET INTEGRITY: sum={bucket_sum:.3f} > 1.08 (overpriced aggregate). "
+                    f"No actionable long — monitor for YES deflation."
+                )
+
         return signals
 
     def _implied_threshold_from_buckets(

@@ -595,6 +595,14 @@ class TradingBot:
                     self._record_skip_reason("no_position_sell")
                     continue
 
+            # Liquidity gate: skip markets with very low volume (thin/stale)
+            if market.volume < 50:
+                logger.info(
+                    f"Liquidity skip: {market.id[:8]} volume=${market.volume:.0f} < $50"
+                )
+                self._record_skip_reason("thin_market")
+                continue
+
             # Per-scan trade budget
             if getattr(self, '_scan_trades_this_cycle', 0) >= getattr(self, '_scan_trade_budget', 5):
                 self._record_skip_reason("scan_budget")

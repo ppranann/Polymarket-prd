@@ -179,6 +179,33 @@ class PolymarketClient:
         except:
             return 0.5
 
+    async def get_market_resolution(self, market_id: str) -> Optional[int]:
+        """
+        Check if a market has resolved and return the outcome.
+
+        Returns:
+            1  if YES won
+            0  if NO won
+            None if still active / unknown
+        """
+        url = f"{self.GAMMA_URL}/markets/{market_id}"
+        try:
+            async with self._session.get(url) as resp:
+                data = await resp.json()
+                if data.get("active", True):
+                    return None  # Still trading
+                prices = data.get("outcomePrices", ["0.5", "0.5"])
+                if isinstance(prices, str):
+                    prices = json.loads(prices)
+                yes_price = float(prices[0])
+                if yes_price >= 0.99:
+                    return 1  # YES won
+                if yes_price <= 0.01:
+                    return 0  # NO won
+                return None  # Inconclusive
+        except Exception:
+            return None
+
     async def health_check(self) -> bool:
         return True
 

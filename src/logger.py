@@ -88,6 +88,7 @@ class PredictionLog:
     actual_outcome: Optional[int] = None  # 1 = YES won, 0 = NO won
     resolved_at: Optional[datetime] = None
     pnl_realized: Optional[float] = None
+    brier_score: Optional[float] = None   # (p_model - outcome)^2, lower is better
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for Supabase insertion"""
@@ -117,7 +118,8 @@ class PredictionLog:
             "resolved": self.resolved,
             "actual_outcome": self.actual_outcome,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
-            "pnl_realized": self.pnl_realized
+            "pnl_realized": self.pnl_realized,
+            "brier_score": self.brier_score,
         }
 
 
@@ -302,6 +304,60 @@ class AuditLogger:
             f"alpha={prediction.alpha:.1%} | days_out={prediction.days_to_resolution}"
         )
         return None
+
+    async def update_prediction_resolution(
+        self,
+        market_id: str,
+        actual_outcome: int,  # 1=YES won, 0=NO won
+        p_model: float,
+    ) -> None:
+        """
+        Mark a prediction as resolved and compute its Brier score.
+
+        Brier score = (p_model - actual_outcome)^2
+        Lower is better. 0.0 = perfect, 0.25 = random, 1.0 = maximally wrong.
+        """
+        brier = (p_model - actual_outcome) ** 2
+        resolved_at = datetime.utcnow().isoformat()
+
+        logger.info(
+            f"RESOLUTION: market={market_id[:8]} outcome={'YES' if actual_outcome else 'NO'} "
+            f"p_model={p_model:.3f} brier={brier:.4f}"
+        )
+
+        if not (self._connected and self._client):
+            return
+
+        try:
+            self._client.table(f"{self.table_prefix}predictions").update({
+                "resolved": True,
+                "actual_outcome": actual_outcome,
+                "resolved_at": resolved_at,
+                "brier_score": brier,
+            }).eq("market_id", market_id).eq("resolved", False).execute()
+        except Exception as e:
+            logger.debug(f"Failed to update resolution for {market_id}: {e}")
+
+    async def get_unresolved_predictions(self, cutoff_date: str) -> List[Dict]:
+        """
+        Fetch predictions whose target_date <= cutoff_date and not yet resolved.
+        Used by the resolution checker to find markets that should have settled.
+        """
+        if not (self._connected and self._client):
+            return []
+        try:
+            response = (
+                self._client
+                .table(f"{self.table_prefix}predictions")
+                .select("market_id, p_model, target_date")
+                .eq("resolved", False)
+                .lte("target_date", cutoff_date)
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.debug(f"Failed to fetch unresolved predictions: {e}")
+            return []
 
     async def log_scan(
         self,

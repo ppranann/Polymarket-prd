@@ -100,7 +100,10 @@ class ResolutionTracker:
 
     async def update_predictions(self, resolutions: Dict[str, dict]) -> int:
         """
-        Update prediction logs in Supabase with resolution outcomes.
+        Update prediction logs in Supabase with resolution outcomes and Brier scores.
+
+        Brier score = (p_model - actual_outcome)^2
+        Lower is better: 0.0 = perfect, 0.25 = random, 1.0 = maximally wrong.
 
         Args:
             resolutions: Dict from check_resolutions()
@@ -113,25 +116,46 @@ class ResolutionTracker:
 
         updated = 0
         for market_id, result in resolutions.items():
+            actual_outcome = result["outcome"]
             try:
+                # Fetch p_model from existing prediction record to compute Brier score
+                existing = (
+                    self._logger._client
+                    .table(f"{self._logger.table_prefix}predictions")
+                    .select("p_model")
+                    .eq("market_id", market_id)
+                    .eq("resolved", False)
+                    .limit(1)
+                    .execute()
+                )
+                p_model = (existing.data[0].get("p_model", 0.5)
+                           if existing.data else 0.5)
+                brier = (p_model - actual_outcome) ** 2
+
                 response = (
                     self._logger._client
                     .table(f"{self._logger.table_prefix}predictions")
                     .update({
                         "resolved": True,
-                        "actual_outcome": result["outcome"],
-                        "resolved_at": datetime.now().isoformat()
+                        "actual_outcome": actual_outcome,
+                        "resolved_at": datetime.now().isoformat(),
+                        "brier_score": brier,
                     })
                     .eq("market_id", market_id)
+                    .eq("resolved", False)
                     .execute()
                 )
                 if response.data:
                     updated += len(response.data)
+                    logger.info(
+                        f"BRIER: {market_id[:8]} | outcome={'YES' if actual_outcome else 'NO'} "
+                        f"| p_model={p_model:.3f} | brier={brier:.4f}"
+                    )
             except Exception as e:
                 logger.debug(f"Failed to update prediction for {market_id}: {e}")
 
         if updated:
-            logger.info(f"Updated {updated} predictions with resolution outcomes")
+            logger.info(f"Updated {updated} predictions with resolution outcomes + Brier scores")
 
         return updated
 
