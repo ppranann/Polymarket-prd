@@ -620,6 +620,7 @@ class AlphaDetector:
             return None
 
         p_implied = 0.0
+        any_overlap = False
         for info in bucket_info:
             low_f = info["low_f"]
             high_f = info["high_f"]
@@ -629,6 +630,7 @@ class AlphaDetector:
                 # Bucket fully above threshold → add full price
                 if low_f >= threshold_f:
                     p_implied += price
+                    any_overlap = True
                 # Bucket partially overlaps → add proportional share
                 elif high_f > threshold_f and low_f < threshold_f:
                     if high_f != float('inf') and low_f != float('-inf'):
@@ -636,15 +638,22 @@ class AlphaDetector:
                         p_implied += price * overlap
                     else:
                         p_implied += price * 0.5  # rough estimate
+                    any_overlap = True
             else:  # below
                 if high_f <= threshold_f:
                     p_implied += price
+                    any_overlap = True
                 elif low_f < threshold_f and high_f > threshold_f:
                     if high_f != float('inf') and low_f != float('-inf'):
                         overlap = (threshold_f - low_f) / (high_f - low_f)
                         p_implied += price * overlap
                     else:
                         p_implied += price * 0.5
+                    any_overlap = True
+
+        # If no bucket overlaps the relevant side, we have no evidence → skip cross-check
+        if not any_overlap:
+            return None
 
         return min(p_implied, 1.0)
 
