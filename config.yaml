@@ -22,7 +22,7 @@ tomorrow_io:
     lon: 126.9780
 
 risk:
-  initial_capital: 30.0
+  initial_capital: 5000.0
   max_trade_size: 500.00           # Absolute safety ceiling (pct cap is the real limit)
   max_trade_size_pct: 0.10         # 10% of current capital per trade (scales automatically)
   kelly_scale: 0.25               # 25% Kelly → produces 4-10% of capital, scales with balance
