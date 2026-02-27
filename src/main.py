@@ -358,6 +358,18 @@ class TradingBot:
                     )
                     if resolutions:
                         await self._resolution_tracker.update_predictions(resolutions)
+                        # Close resolved positions in the risk manager so slots free up.
+                        # In paper mode nothing is sold, but the position needs to be
+                        # removed from the in-memory count or max_open_positions blocks
+                        # all new trades indefinitely.
+                        for market_id, result in resolutions.items():
+                            if result.get("resolved") and self._risk_manager.get_position(market_id):
+                                exit_price = 1.0 if result.get("winning_side") == "YES" else 0.0
+                                self._risk_manager.close_position(market_id, exit_price)
+                                logger.info(
+                                    f"Resolution close: {market_id[:8]}... → "
+                                    f"{result['winning_side']} @ ${exit_price:.2f}"
+                                )
 
                 # Step 4: Show P&L (compact after each scan, full every hour)
                 if self._performance.should_print_full_summary(interval_minutes=60):
