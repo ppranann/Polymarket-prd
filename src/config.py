@@ -121,6 +121,8 @@ class DevelopmentConfig:
     dry_run: bool
     paper_trading: bool
     log_all_requests: bool
+    paper_capital: float = 5000.0       # Paper mode capital override
+    paper_max_positions: int = 100      # Paper mode position cap override
 
 
 @dataclass
@@ -340,7 +342,9 @@ class ConfigLoader:
             development=DevelopmentConfig(
                 dry_run=dev_cfg['dry_run'],
                 paper_trading=dev_cfg['paper_trading'],
-                log_all_requests=dev_cfg['log_all_requests']
+                log_all_requests=dev_cfg['log_all_requests'],
+                paper_capital=dev_cfg.get('paper_capital', 5000.0),
+                paper_max_positions=dev_cfg.get('paper_max_positions', 100)
             )
         )
         
