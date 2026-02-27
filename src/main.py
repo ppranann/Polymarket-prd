@@ -217,9 +217,11 @@ class TradingBot:
         if self.paper_trading:
             self._risk_manager._capital = self.config.development.paper_capital
             self._risk_manager.risk.max_open_positions = self.config.development.paper_max_positions
+            self._risk_manager.risk.max_exposure_per_event = self.config.development.paper_max_exposure_per_event
             logger.info(
                 f"Paper mode overrides: capital=${self.config.development.paper_capital:.0f}, "
-                f"max_positions={self.config.development.paper_max_positions}"
+                f"max_positions={self.config.development.paper_max_positions}, "
+                f"max_exposure_per_event=${self.config.development.paper_max_exposure_per_event:.0f}"
             )
 
         logger.info("Risk Manager initialized")

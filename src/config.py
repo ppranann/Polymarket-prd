@@ -123,6 +123,7 @@ class DevelopmentConfig:
     log_all_requests: bool
     paper_capital: float = 5000.0       # Paper mode capital override
     paper_max_positions: int = 100      # Paper mode position cap override
+    paper_max_exposure_per_event: float = 500.0  # Paper mode per-event cap (10% of capital)
 
 
 @dataclass
@@ -344,7 +345,8 @@ class ConfigLoader:
                 paper_trading=dev_cfg['paper_trading'],
                 log_all_requests=dev_cfg['log_all_requests'],
                 paper_capital=dev_cfg.get('paper_capital', 5000.0),
-                paper_max_positions=dev_cfg.get('paper_max_positions', 100)
+                paper_max_positions=dev_cfg.get('paper_max_positions', 100),
+                paper_max_exposure_per_event=dev_cfg.get('paper_max_exposure_per_event', 500.0)
             )
         )
         
