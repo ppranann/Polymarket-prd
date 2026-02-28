@@ -928,6 +928,7 @@ class TradingBot:
                 )
                 if success:
                     recovered += 1
+                    self._traded_market_ids.add(pos_data["market_id"])
 
             logger.info(f"Position recovery complete: {recovered}/{len(open_positions)} position(s) restored")
         except Exception as e:
