@@ -114,3 +114,4 @@ development:
   paper_capital: 5000.0           # Paper-only: large capital so Kelly always clears $1 min
   paper_max_positions: 100        # Paper-only: high cap to collect data across many markets
   paper_max_exposure_per_event: 500.0  # Paper-only: 10% of capital per city+date event
+  paper_max_daily_loss: 5000.0         # Paper-only: no effective daily loss limit (full capital)
