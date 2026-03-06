@@ -279,7 +279,12 @@ class FairPriceCalculator:
         else:
             p = self._normal_dist.cdf(z)
 
-        return float(np.clip(p, self.MIN_PRICE, 0.98))
+        p_clipped = float(np.clip(p, self.MIN_PRICE, 0.98))
+        logger.info(
+            f"THRESHOLD_PROB: dir={direction} mu={mu:.2f}°F threshold={threshold_f:.2f}°F "
+            f"sigma={sigma:.2f}°F z={z:.3f} p_raw={p:.4f} p_final={p_clipped:.4f}"
+        )
+        return p_clipped
 
     def get_dynamic_sigma(self, market_condition: str) -> float:
         """
@@ -855,7 +860,13 @@ class FairPriceCalculator:
         # Try to extract from pattern
 
         # CRITICAL: Detect if temperature is in Celsius or Fahrenheit
-        is_celsius = '°C' in condition or '°c' in condition or ' C' in condition
+        # NOTE: bare ' C' is too broad — "New York City" and "Chicago" both contain " C".
+        # Only treat as Celsius when °C symbol present OR digits immediately precede C (e.g. "15 C").
+        is_celsius = (
+            '°C' in condition
+            or '°c' in condition
+            or bool(re.search(r'\d\s*C\b', condition))
+        )
 
         # First try to match range patterns like "30-34°F", "30 to 34°C"
         # Enhanced regex to support NEGATIVE temperatures (e.g., "-4°C")

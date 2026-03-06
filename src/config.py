@@ -63,6 +63,9 @@ class AlphaConfig:
     size_multiplier_max: float
     messy_middle_threshold: float = 0.15  # Wider no-trade zone for mid-priced markets
     bucket_threshold: float = 0.10  # Stricter EV threshold for bucket/max-temp markets
+    min_z_score: float = 1.0          # Min |z| to trade a threshold market (filters forecast≈threshold fake edge)
+    ensemble_max_spread_f: float = 4.0  # Max °F disagreement between primary and Open-Meteo before skipping
+    max_ladder_buckets: int = 2       # Max adjacent bucket markets to ladder per event
 
 
 @dataclass
@@ -310,7 +313,10 @@ class ConfigLoader:
                 threshold=alpha_cfg['threshold'],
                 size_multiplier_max=alpha_cfg['size_multiplier_max'],
                 messy_middle_threshold=alpha_cfg.get('messy_middle_threshold', 0.15),
-                bucket_threshold=alpha_cfg.get('bucket_threshold', 0.10)
+                bucket_threshold=alpha_cfg.get('bucket_threshold', 0.10),
+                min_z_score=float(alpha_cfg.get('min_z_score', 1.0)),
+                ensemble_max_spread_f=float(alpha_cfg.get('ensemble_max_spread_f', 4.0)),
+                max_ladder_buckets=int(alpha_cfg.get('max_ladder_buckets', 2)),
             ),
             scanner=ScannerConfig(
                 scan_interval=scanner_cfg['scan_interval'],

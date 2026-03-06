@@ -450,6 +450,12 @@ class AlphaDetector:
                 "range_str": f"{low}-{high}",
             })
 
+        # Minimum |z| required to generate a signal for threshold markets.
+        # When forecast ≈ threshold (|z| < min_z), the model outputs p ≈ 0.5
+        # regardless of market price, creating fake alpha. Markets correctly
+        # price these near-uncertain events much lower than 50%.
+        min_z = getattr(self.alpha_config, 'min_z_score', 1.0)
+
         # --- Step 2: For threshold markets, compute model prob + implied from buckets ---
         for market in group.threshold_markets:
             price = prices.get(market.id, market.yes_price)
@@ -460,6 +466,19 @@ class AlphaDetector:
 
             if threshold_f is None:
                 logger.warning(f"Cannot extract threshold from: {market.question[:60]}")
+                continue
+
+            z = (threshold_f - mu) / sigma if sigma > 0 else 0
+
+            # Skip markets where forecast is too close to threshold (unreliable zone).
+            # The Normal model outputs ~50% here but markets consistently price lower,
+            # meaning NWS/Tomorrow.io has systematic warm bias vs Polymarket resolution station.
+            if abs(z) < min_z:
+                logger.info(
+                    f"SKIP {market.id[:8]}: |z|={abs(z):.2f} < {min_z:.1f} "
+                    f"(mu={mu:.1f}°F threshold={threshold_f:.1f}°F sigma={sigma:.1f}°F — "
+                    f"forecast too close to threshold, model has no edge)"
+                )
                 continue
 
             # Model probability from shared distribution
@@ -485,7 +504,6 @@ class AlphaDetector:
                     cross_check_ok = False
 
             alpha = p_model - price
-            z = (threshold_f - mu) / sigma if sigma > 0 else 0
             confidence = self.calculator._calculate_confidence(z)
 
             # Generate signal using existing logic
@@ -515,42 +533,41 @@ class AlphaDetector:
 
             signals.append(signal)
 
-        # --- Step 3: For bucket markets, find most underpriced ---
-        best_bucket_signal = None
-        best_bucket_ev = 0.0
+        # --- Step 3: For bucket markets, ladder top N underpriced buckets ---
+        # Instead of only the single best bucket, we add up to max_ladder_buckets
+        # adjacent underpriced buckets. One winner covers the rest.
+        max_ladder = getattr(self.alpha_config, 'max_ladder_buckets', 2)
+        ladder_candidates = [
+            info for info in bucket_info
+            if (info["p_model"] - info["price"]) > bucket_threshold
+        ]
+        # Sort by EV descending, take top N
+        ladder_candidates.sort(key=lambda x: x["p_model"] - x["price"], reverse=True)
+        ladder_candidates = ladder_candidates[:max_ladder]
 
-        for info in bucket_info:
+        for info in ladder_candidates:
             market = info["market"]
             p_model = info["p_model"]
             price = info["price"]
             ev = p_model - price
+            confidence = min(0.8, 0.5 + ev)
 
-            if ev <= bucket_threshold:
-                continue
+            signal = self.analyze_market(
+                market_id=market.id,
+                fair_price=p_model,
+                market_price=price,
+                z_score=0.0,
+                confidence=confidence,
+            )
+            signal.market_type = "max_temp"
+            signal.p_model = p_model
+            signal.distribution_mu = mu
+            signal.distribution_sigma = sigma
+            signal.bucket_range = info["range_str"]
+            signal.event_key = group.event_key
 
-            if ev > best_bucket_ev:
-                best_bucket_ev = ev
-                z = 0.0  # No single z-score for bucket
-                confidence = min(0.8, 0.5 + ev)  # Simple confidence proxy
-
-                signal = self.analyze_market(
-                    market_id=market.id,
-                    fair_price=p_model,
-                    market_price=price,
-                    z_score=z,
-                    confidence=confidence,
-                )
-                signal.market_type = "max_temp"
-                signal.p_model = p_model
-                signal.distribution_mu = mu
-                signal.distribution_sigma = sigma
-                signal.bucket_range = info["range_str"]
-                signal.event_key = group.event_key
-                best_bucket_signal = signal
-
-        # Only trade the single best bucket (small bankroll)
-        if best_bucket_signal and best_bucket_signal.action == "BUY":
-            signals.append(best_bucket_signal)
+            if signal.action == "BUY":
+                signals.append(signal)
 
         # --- Step 4: Bucket integrity check (model-free structural arb) ---
         # Σ P_market(bucket_i) should ≈ 1.0. Significant deviation = arb opportunity.

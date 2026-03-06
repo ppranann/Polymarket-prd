@@ -68,6 +68,9 @@ alpha:
   messy_middle_threshold: 0.15   # Wider no-trade zone for 0.3-0.7 fair prices
   size_multiplier_max: 2.0       # Re-enabled: scale up on strong alpha signals
   bucket_threshold: 0.10         # Stricter EV floor for bucket/max-temp markets
+  min_z_score: 1.0               # Skip threshold markets where |z| < this (forecast ≈ threshold = fake edge)
+  ensemble_max_spread_f: 4.0     # Skip group if NWS vs Open-Meteo disagree by more than this (°F)
+  max_ladder_buckets: 2          # Ladder up to this many adjacent bucket markets per event
 
 logging:
   level: INFO

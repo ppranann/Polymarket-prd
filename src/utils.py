@@ -73,11 +73,15 @@ def extract_target_date(question: str) -> Tuple[str, int]:
 
     E.g. "Highest temperature in London on February 12?" → ("2026-02-12", 2)
 
+    Handles year rollover: if the extracted date has already passed this year,
+    tries next year (e.g. "on December 31" parsed in January → next year).
+
     Args:
         question: Market question text
 
     Returns:
-        Tuple of (ISO date string, days_to_resolution)
+        Tuple of (ISO date string, days_to_resolution).
+        days_to_resolution is -1 when the date is in the past (market expired).
     """
     match = re.search(r'on\s+(\w+)\s+(\d{1,2})', question, re.IGNORECASE)
     if match:
@@ -85,11 +89,16 @@ def extract_target_date(question: str) -> Tuple[str, int]:
         day = int(match.group(2))
         month = MONTH_MAP.get(month_name)
         if month:
-            year = datetime.now().year
+            today = datetime.now().date()
+            year = today.year
             try:
                 target = datetime(year, month, day).date()
-                days_out = (target - datetime.now().date()).days
-                return target.isoformat(), max(0, days_out)
+                days_out = (target - today).days
+                # If already passed this year, try next year
+                if days_out < -1:
+                    target = datetime(year + 1, month, day).date()
+                    days_out = (target - today).days
+                return target.isoformat(), days_out
             except ValueError:
                 pass
     return datetime.now().date().isoformat(), 0

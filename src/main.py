@@ -28,6 +28,7 @@ from .secrets_manager import load_bot_secrets, SecretsManager
 from .clients.polymarket import create_polymarket_client, PolymarketClient
 from .clients.tomorrow_client import create_tomorrow_client, RateLimitConfig
 from .clients.nws_client import create_nws_client, NWSClient, US_CITY_COORDS
+from .clients.open_meteo import create_open_meteo_client, OpenMeteoClient
 from .calculator import create_calculator, FairPriceCalculator
 from .risk import create_risk_manager, RiskManager
 from .scanner import create_market_scanner, MarketScanner, MarketGroup
@@ -95,6 +96,7 @@ class TradingBot:
         self._polymarket_client = None
         self._weather_client = None
         self._nws_client: Optional[NWSClient] = None
+        self._open_meteo_client: Optional[OpenMeteoClient] = None
         self._calculator = None
         self._risk_manager = None
         self._scanner = None
@@ -195,6 +197,11 @@ class TradingBot:
         logger.info("Initializing NWS client for US cities...")
         self._nws_client = create_nws_client(cache_ttl_seconds=1800.0)
         logger.info("NWS client initialized (NYC, Atlanta, Miami, Seattle, Dallas, Chicago)")
+
+        # Initialize Open-Meteo client (free, no API key) for ensemble validation
+        logger.info("Initializing Open-Meteo ensemble client...")
+        self._open_meteo_client = create_open_meteo_client()
+        logger.info("Open-Meteo client initialized")
 
         # Initialize Calculator
         logger.info("Initializing Fair Price Calculator...")
@@ -341,9 +348,31 @@ class TradingBot:
         
         while self._running:
             try:
-                # Step 0: Check circuit breaker (Priority 4: Risk Management)
+                # Step 0: Check circuit breaker + daily loss auto-reset (Priority 4: Risk Management)
+                # Both the circuit breaker and daily-loss pause are UTC-day-scoped.
+                # Auto-reset at the start of each new UTC day so the bot resumes automatically.
+                now_utc = datetime.utcnow()
+                if not hasattr(self, '_last_reset_date'):
+                    self._last_reset_date = now_utc.date()
+                if now_utc.date() > self._last_reset_date:
+                    self._last_reset_date = now_utc.date()
+                    if self._risk_manager._trading_paused:
+                        logger.info(
+                            f"AUTO-RESET: new UTC day ({now_utc.date()}), "
+                            f"clearing daily loss pause (was: {self._risk_manager._pause_reason})"
+                        )
+                        self._risk_manager.resume_trading()
+                        self._risk_manager.reset_daily_stats()
+                    if self._risk_manager._circuit_breaker_triggered:
+                        logger.info(
+                            f"AUTO-RESET: new UTC day ({now_utc.date()}), "
+                            "clearing circuit breaker"
+                        )
+                        self._risk_manager._circuit_breaker_triggered = False
+                        self._risk_manager._recent_pnl.clear()
+
                 if self._risk_manager._circuit_breaker_triggered:
-                    logger.critical("Circuit breaker triggered - trading halted")
+                    logger.critical("Circuit breaker triggered - trading halted until next UTC day")
                     await self._handle_circuit_breaker()
                     break
 
@@ -558,6 +587,12 @@ class TradingBot:
         _, days_out = extract_target_date(
             group.all_markets[0].question if group.all_markets else ""
         )
+        # Negative days_out means the target date is in the past — market already expired.
+        if days_out < 0:
+            logger.info(
+                f"Skipping {group.event_key} — target date is in the past (days_out={days_out})"
+            )
+            return
         lead_hours = days_out * 24
 
         # Same-day markets (lead=0h): only trade if enough of the day remains.
@@ -590,6 +625,33 @@ class TradingBot:
             f"(forecast_max={date_weather.temp_max:.1f}°F, lead={lead_hours}h, "
             f"{len(group.threshold_markets)} threshold, {len(group.bucket_markets)} bucket)"
         )
+
+        # --- Ensemble gate: validate against Open-Meteo (free second source) ---
+        # If the two independent sources disagree by more than the threshold,
+        # the forecast is genuinely uncertain — skip rather than trade noise.
+        ensemble_max_spread = getattr(self.config.alpha, 'ensemble_max_spread_f', 4.0)
+        try:
+            om_temp = await self._open_meteo_client.get_temp_for_date(group.city, group.date)
+            if om_temp is not None:
+                spread = abs(mu - om_temp)
+                if spread > ensemble_max_spread:
+                    logger.info(
+                        f"ENSEMBLE SKIP {group.event_key}: "
+                        f"primary={mu:.1f}°F vs Open-Meteo={om_temp:.1f}°F "
+                        f"(spread={spread:.1f}°F > {ensemble_max_spread:.1f}°F threshold) "
+                        f"— forecasts disagree, skipping to avoid noise"
+                    )
+                    return
+                logger.info(
+                    f"ENSEMBLE OK {group.event_key}: "
+                    f"primary={mu:.1f}°F Open-Meteo={om_temp:.1f}°F spread={spread:.1f}°F"
+                )
+            else:
+                logger.info(
+                    f"ENSEMBLE N/A {group.event_key}: Open-Meteo has no data for {group.date}, proceeding"
+                )
+        except Exception as e:
+            logger.warning(f"Open-Meteo check failed for {group.event_key}: {e} — proceeding without ensemble gate")
 
         # Get cross-market alpha signals
         signals = self._alpha_detector.analyze_market_group(
@@ -664,6 +726,18 @@ class TradingBot:
             if result.action == "SKIP":
                 logger.warning(f"Trade failed: {result.reason}")
                 continue
+
+            # Trace log: exact inputs that produced this trade (key for debugging calibration)
+            threshold_logged = self._calculator.get_temperature_threshold_from_condition(market.question)
+            logger.info(
+                f"TRADE_TRACE {market.id[:8]}: "
+                f"city={group.city} date={group.date} "
+                f"mu={mu:.2f}°F sigma={sigma:.2f}°F "
+                f"threshold_f={threshold_logged:.2f}°F "
+                f"z={(( threshold_logged - mu) / sigma if sigma > 0 and threshold_logged else 0):.3f} "
+                f"p_model={signal.p_model:.4f} market_price={current_price:.4f} "
+                f"alpha={signal.alpha:.4f} question='{market.question[:80]}'"
+            )
 
             # Log prediction with cross-market fields
             prediction = PredictionLog(
@@ -1017,7 +1091,10 @@ class TradingBot:
 
         if self._nws_client:
             await self._nws_client.close()
-        
+
+        if hasattr(self, '_open_meteo_client') and self._open_meteo_client:
+            await self._open_meteo_client.close()
+
         if self._logger:
             await self._logger.close()
         
