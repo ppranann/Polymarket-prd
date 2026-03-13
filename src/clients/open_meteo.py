@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 CITY_COORDS: Dict[str, Tuple[float, float]] = {
     "nyc":     (40.7789, -73.9692),
     "london":  (51.5074, -0.1278),
-    "seoul":   (37.5665, 126.9780),
+    "seoul":   (37.4691, 126.4505),  # Incheon Airport — matches Tomorrow.io + Polymarket resolution station
     "chicago": (41.9742, -87.9073),
     "miami":   (25.7959, -80.2870),
     "dallas":  (32.8998, -97.0403),

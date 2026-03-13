@@ -33,7 +33,7 @@ from .calculator import create_calculator, FairPriceCalculator
 from .risk import create_risk_manager, RiskManager
 from .scanner import create_market_scanner, MarketScanner, MarketGroup
 from .executor import create_order_executor, OrderExecutor
-from .alpha import create_alpha_detector, AlphaDetector
+from .alpha import create_alpha_detector, AlphaDetector, AlphaSignal
 from .auto_exit import create_auto_exit_manager, AutoExitManager
 from .logger import create_audit_logger, AuditLogger, PredictionLog
 from .performance import create_performance_reporter, PerformanceReporter
@@ -595,6 +595,22 @@ class TradingBot:
             return
         lead_hours = days_out * 24
 
+        # Lead-time window filter: only trade markets in the configured range.
+        min_days = getattr(self.config.alpha, 'min_days_out', 1)
+        max_days = getattr(self.config.alpha, 'max_days_out', 3)
+        if days_out < min_days:
+            logger.info(
+                f"Skipping {group.event_key} — {days_out}d out is below min_days_out={min_days} "
+                f"(same-day/imminent markets have less edge)"
+            )
+            return
+        if days_out > max_days:
+            logger.info(
+                f"Skipping {group.event_key} — {days_out}d out exceeds max_days_out={max_days} "
+                f"(forecast too uncertain)"
+            )
+            return
+
         # Same-day markets (lead=0h): only trade if enough of the day remains.
         # Early morning still has model edge (day's max temp not yet known).
         # Afternoon/evening: market prices in live observations we can't see.
@@ -617,6 +633,7 @@ class TradingBot:
             forecast_max_temp_f=date_weather.temp_max,
             lead_hours=lead_hours,
             forecast_spread_f=forecast_spread_f,
+            city=group.city,
         )
 
         logger.info(
@@ -663,7 +680,7 @@ class TradingBot:
 
         # Execute trades for actionable signals
         for signal in signals:
-            if signal.action not in ("BUY", "SELL"):
+            if signal.action not in ("BUY", "SELL", "BUY_NO"):
                 self._record_skip_reason("no_alpha")
                 continue
 
@@ -676,12 +693,34 @@ class TradingBot:
             if not market:
                 continue
 
-            # Skip SELL signals without position
+            # SELL signal with no existing position → convert to BUY_NO.
+            # This is the case where YES is overpriced (model P(YES) << market price).
+            # Rather than discard the signal, buy the NO token directly.
             if signal.action == "SELL":
                 position = self._risk_manager.get_position(market.id)
                 if not position or position.size <= 0:
-                    self._record_skip_reason("no_position_sell")
-                    continue
+                    if not market.clob_no_token_id:
+                        self._record_skip_reason("no_no_token")
+                        continue
+                    signal = AlphaSignal(
+                        market_id=signal.market_id,
+                        alpha=signal.alpha,
+                        fair_price=signal.fair_price,
+                        market_price=signal.market_price,
+                        z_score=signal.z_score,
+                        confidence=signal.confidence,
+                        action="BUY_NO",
+                        size_multiplier=signal.size_multiplier,
+                        expected_return=signal.expected_return,
+                        recommendation=signal.recommendation,
+                        market_type=signal.market_type,
+                        p_model=signal.p_model,
+                        p_implied=signal.p_implied,
+                        distribution_mu=signal.distribution_mu,
+                        distribution_sigma=signal.distribution_sigma,
+                        bucket_range=signal.bucket_range,
+                        event_key=signal.event_key,
+                    )
 
             # Liquidity gate: skip markets with very low volume (thin/stale)
             if market.volume < 50:
@@ -733,7 +772,7 @@ class TradingBot:
                 f"TRADE_TRACE {market.id[:8]}: "
                 f"city={group.city} date={group.date} "
                 f"mu={mu:.2f}°F sigma={sigma:.2f}°F "
-                f"threshold_f={threshold_logged:.2f}°F "
+                f"threshold_f={f'{threshold_logged:.2f}' if threshold_logged is not None else 'N/A'}°F "
                 f"z={(( threshold_logged - mu) / sigma if sigma > 0 and threshold_logged else 0):.3f} "
                 f"p_model={signal.p_model:.4f} market_price={current_price:.4f} "
                 f"alpha={signal.alpha:.4f} question='{market.question[:80]}'"

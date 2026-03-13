@@ -29,7 +29,8 @@ class Market:
     volume: float
     description: str = ""
     liquidity_rewards_enabled: bool = False
-    clob_token_id: str = ""  # YES token ID for CLOB order placement
+    clob_token_id: str = ""     # YES token ID for CLOB order placement
+    clob_no_token_id: str = ""  # NO token ID for buying NO directly
 
 @dataclass
 class Order:
@@ -112,8 +113,9 @@ class PolymarketClient:
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         self._session = aiohttp.ClientSession(headers=headers)
 
-        # Cache: market_id -> clob_token_id (populated during market discovery)
-        self._token_id_map: Dict[str, str] = {}
+        # Cache: market_id -> token_id (populated during market discovery)
+        self._token_id_map: Dict[str, str] = {}     # YES tokens
+        self._no_token_id_map: Dict[str, str] = {}  # NO tokens
 
         # Initialize real CLOB client for live trading
         self._clob = None
@@ -272,16 +274,19 @@ class PolymarketClient:
         prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
         yes_p = float(prices[0]) if (prices and len(prices) > 0) else 0.5
 
-        # Extract YES token ID for CLOB order placement
+        # Extract YES and NO token IDs for CLOB order placement
         raw_token_ids = market.get('clobTokenIds', '[]')
         token_ids = json.loads(raw_token_ids) if isinstance(raw_token_ids, str) else (raw_token_ids or [])
-        clob_token_id = str(token_ids[0]) if token_ids else ''
+        clob_token_id = str(token_ids[0]) if len(token_ids) > 0 else ''
+        clob_no_token_id = str(token_ids[1]) if len(token_ids) > 1 else ''
 
         market_id = market.get('id', '')
 
-        # Cache the mapping so place_limit_order can look it up by market_id
+        # Cache both token mappings so place_limit_order can look them up by market_id
         if clob_token_id:
             self._token_id_map[market_id] = clob_token_id
+        if clob_no_token_id:
+            self._no_token_id_map[market_id] = clob_no_token_id
 
         return Market(
             id=market_id,
@@ -296,6 +301,7 @@ class PolymarketClient:
             description=market.get('description', event.get('description', '')),
             liquidity_rewards_enabled=market.get('liquidityRewardsEnabled', False),
             clob_token_id=clob_token_id,
+            clob_no_token_id=clob_no_token_id,
         )
 
     async def cancel_all_orders(self, *args, **kwargs):
@@ -310,14 +316,15 @@ class PolymarketClient:
             self._logger.warning(f"cancel_all_orders error: {e}")
         return True
 
-    async def place_limit_order(self, market_id: str, side: str, price: float, size: float, **kwargs):
+    async def place_limit_order(self, market_id: str, side: str, price: float, size: float, outcome: str = "YES", **kwargs):
         """
         Place a limit order.
+        - outcome: "YES" (default) buys YES token; "NO" buys NO token at (1 - yes_price)
         - Paper mode: returns MockOrder (no real submission)
         - Live mode: signs and submits via Polymarket CLOB API
         """
         if self._paper_trading or self._clob is None:
-            self._logger.debug(f"PAPER ORDER: {side.upper()} {size} @ ${price} on {market_id}")
+            self._logger.debug(f"PAPER ORDER: {side.upper()} {outcome} {size} @ ${price} on {market_id}")
             return MockOrder(
                 order_id=f"mock-paper-{market_id[:8]}",
                 market_id=market_id,
@@ -326,11 +333,17 @@ class PolymarketClient:
                 size=size
             )
 
-        # Look up the YES token ID (needed by CLOB API)
-        token_id = self._token_id_map.get(market_id, '')
-        if not token_id:
-            self._logger.error(f"No clobTokenId found for market {market_id[:8]} — cannot place order")
-            raise ValueError(f"Missing CLOB token ID for market {market_id}")
+        # Look up the correct token ID based on outcome
+        if outcome == "NO":
+            token_id = self._no_token_id_map.get(market_id, '')
+            if not token_id:
+                self._logger.error(f"No NO token ID for market {market_id[:8]} — cannot place NO order")
+                raise ValueError(f"Missing NO CLOB token ID for market {market_id}")
+        else:
+            token_id = self._token_id_map.get(market_id, '')
+            if not token_id:
+                self._logger.error(f"No clobTokenId found for market {market_id[:8]} — cannot place order")
+                raise ValueError(f"Missing CLOB token ID for market {market_id}")
 
         try:
             order_args = OrderArgs(

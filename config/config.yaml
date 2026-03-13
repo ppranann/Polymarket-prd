@@ -85,6 +85,9 @@ alpha:
   enabled: true
   threshold: 0.08                 # 8% edge threshold (lowered: now only above/below markets)
   size_multiplier_max: 2.0        # Max 2x position size increase
+  min_days_out: 1                 # Skip same-day markets (1 = T+1 and beyond)
+  max_days_out: 3                 # Skip >3 days out (forecast too uncertain)
+  # To focus exclusively on T+2: set min_days_out: 2, max_days_out: 2
 
 # Logging and Monitoring
 logging:

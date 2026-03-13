@@ -394,8 +394,28 @@ class OrderExecutor:
         # use _place_order() which registers positions in the risk manager.
         # Farming places symmetric BUY+SELL but never calls risk.open_position(),
         # so positions were invisible (showed 0 positions for 2+ hours).
-        if action in ("BUY", "SELL") and abs(alpha) >= self.config.alpha.threshold:
+        if action in ("BUY", "SELL", "BUY_NO") and abs(alpha) >= self.config.alpha.threshold:
             # Directional trade: strong alpha signal → take a position
+            if action == "BUY_NO":
+                # Buying NO = buying NO token at (1 - yes_price).
+                # Alpha is negative (YES overpriced), so |alpha| is our edge.
+                no_price = round(1.0 - current_price, 4)
+                logger.info(
+                    f"Directional BUY_NO on {market.id[:8]} "
+                    f"(YES overpriced: model={fair_price:.3f} market={current_price:.4f}, "
+                    f"buying NO @ ${no_price:.4f})"
+                )
+                return await self._place_order(
+                    market=market,
+                    side="BUY",
+                    price=no_price,
+                    size=size,
+                    post_only=True,
+                    entry_alpha=abs(alpha),
+                    event_key=event_key,
+                    market_type=market_type,
+                    outcome="NO",
+                )
             logger.info(
                 f"Directional {action} on {market.id[:8]} "
                 f"(alpha={alpha:.1%}, price=${current_price:.4f})"
@@ -797,6 +817,7 @@ class OrderExecutor:
         entry_alpha: float = 0.0,
         event_key: str = "",
         market_type: str = "threshold",
+        outcome: str = "YES",
     ) -> ExecutionResult:
         """
         Place a single order.
@@ -838,14 +859,15 @@ class OrderExecutor:
                 side=side,
                 price=price,
                 size=size_shares,
-                post_only=post_only
+                post_only=post_only,
+                outcome=outcome,
             )
-            
+
             logger.info(
-                f"Order placed: {side} {size} @ ${price:.4f} "
+                f"Order placed: {side} {outcome} {size} @ ${price:.4f} "
                 f"on {market.id[:8]}... (Post-Only: {post_only})"
             )
-            
+
             # Track order (use dict access for mock responses)
             self._recent_orders[order["orderID"]] = datetime.now()
 

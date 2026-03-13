@@ -70,31 +70,43 @@ class FairPriceCalculator:
     DEFAULT_SIGMA_FAHRENHEIT = 3.5
 
     # Dynamic sigma by forecast horizon (days out), in °F.
-    # Values deliberately wide: the model should only signal when the edge is
-    # unambiguous.  Tight sigma (2-5°F) was generating too many false positives
-    # on markets that simply had thin orderbooks, not genuine mispricing.
-    # Doubled values reduce false positives significantly.
+    # Calibrated against Seoul/Incheon (RKSI) vs Tomorrow.io actuals (Mar 2026, n=4):
+    # observed std dev of (forecast - actual) ≈ 0.5–2°F. Previous wide values
+    # (4–10°F) caused the model to assign 10–18% probability to thresholds
+    # that were 3–4°C above forecast — inflating EV on consistently losing positions.
     SIGMA_BY_HORIZON = {
-        0: 4.0,   # Same-day: ~2°C measurement + station mismatch error
-        1: 6.0,   # 1 day out: wider forecast + resolution uncertainty
-        2: 8.0,   # 2 days out
-        3: 10.0,  # 3 days out: NWP skill degrades rapidly beyond 48h
+        0: 2.0,   # Same-day: Tomorrow.io is very accurate once day is underway
+        1: 3.0,   # 1 day out: calibrated vs Wunderground RKSI actuals
+        2: 4.5,   # 2 days out: NWP error grows
+        3: 6.0,   # 3 days out: wider but still much tighter than previous 10°F
     }
 
     # Calibrated forecast error by lead time (hours), in °F.
     # bias = mean(forecast - actual); positive → forecast runs hot.
-    # sigma = std(forecast - actual) PLUS station-mismatch uncertainty.
-    # Old values (2-5°F) were too tight — real-world daily-max errors are
-    # 2-5°C (3.6-9°F) when you add station location + model systematic error.
+    # sigma = std(forecast - actual).
+    # Sigma calibrated from Seoul/RKSI actuals (Mar 2026, n=4): observed ≈0.5°F,
+    # using conservative 2–6°F to account for small sample and city-to-city variation.
+    # Bias set to 0.0 globally — Seoul showed -1.1°F cold bias but other cities
+    # are uncalibrated. Per-city corrections live in CITY_BIAS_F below.
     FORECAST_ERROR = {
-        0:  {"bias": 0.0, "sigma": 4.0},   # Same-day: was 2.0°F
-        24: {"bias": 0.0, "sigma": 6.0},   # 1 day out: was 3.0°F
-        48: {"bias": 0.5, "sigma": 8.0},   # 2 days out: was 4.0°F
-        72: {"bias": 0.5, "sigma": 10.0},  # 3 days out: was 5.0°F
+        0:  {"bias": 0.0, "sigma": 2.0},   # Same-day
+        24: {"bias": 0.0, "sigma": 3.0},   # 1 day out
+        48: {"bias": 0.0, "sigma": 4.5},   # 2 days out (primary trading horizon)
+        72: {"bias": 0.0, "sigma": 6.0},   # 3 days out
     }
 
-    # Extra sigma for range/bucket markets to account for even wider tail risk
-    RANGE_SIGMA_ADDON = 2.0  # was 1.0
+    # Per-city bias in °F: mean(Tomorrow.io forecast − Wunderground actual).
+    # Positive → Tomorrow.io runs hot. Applied on top of FORECAST_ERROR["bias"].
+    # Calibrate by collecting (forecast_temp_f, actual_resolution_temp) pairs from Supabase.
+    CITY_BIAS_F = {
+        "seoul":   -1.1,   # n=4, Mar 2026: Tomorrow.io runs cold vs Wunderground RKSI
+        "incheon": -1.1,   # same station
+        # "london": 0.0,   # uncalibrated
+        # "nyc":    0.0,   # uncalibrated
+    }
+
+    # Extra sigma for range/bucket markets
+    RANGE_SIGMA_ADDON = 1.0
 
     # Default expected temperature (historical average)
     DEFAULT_EXPECTED_TEMP = 65.0
@@ -180,6 +192,7 @@ class FairPriceCalculator:
         forecast_max_temp_f: float,
         lead_hours: int,
         forecast_spread_f: float = 0.0,
+        city: Optional[str] = None,
     ) -> Tuple[float, float]:
         """
         Get the adjusted Normal distribution parameters for max temperature.
@@ -192,12 +205,14 @@ class FairPriceCalculator:
             lead_hours: Hours until market resolution
             forecast_spread_f: temp_max - temp_min from forecast (°F), used
                                to widen sigma if forecast itself is uncertain
+            city: Optional city slug for per-city bias correction (e.g. "seoul")
 
         Returns:
             Tuple of (mu, sigma) in °F for T ~ Normal(mu, sigma²)
         """
         error = self._interpolate_forecast_error(lead_hours)
-        mu = forecast_max_temp_f - error["bias"]
+        city_bias = self.CITY_BIAS_F.get(city.lower(), 0.0) if city else 0.0
+        mu = forecast_max_temp_f - error["bias"] - city_bias
         sigma = error["sigma"]
 
         # Widen sigma if Tomorrow.io's own spread is wider than our model

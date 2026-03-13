@@ -66,6 +66,8 @@ class AlphaConfig:
     min_z_score: float = 1.0          # Min |z| to trade a threshold market (filters forecast≈threshold fake edge)
     ensemble_max_spread_f: float = 4.0  # Max °F disagreement between primary and Open-Meteo before skipping
     max_ladder_buckets: int = 2       # Max adjacent bucket markets to ladder per event
+    min_days_out: int = 1             # Skip same-day markets (outcome nearly determined, less edge)
+    max_days_out: int = 3             # Skip markets >3 days out (forecast too uncertain)
 
 
 @dataclass
