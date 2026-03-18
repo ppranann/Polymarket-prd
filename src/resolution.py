@@ -9,9 +9,34 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
+import re
+
 import aiohttp
 
 from .logger import AuditLogger
+
+
+def _bucket_midpoint_f(bucket_range: str, question_text: str) -> Optional[float]:
+    """
+    Convert a stored bucket_range string (e.g. "8-9", "-2-0", "11-15") to a
+    midpoint temperature in °F.  Returns None if parsing fails.
+
+    bucket_range is stored in the original market unit (°C or °F), so we detect
+    the unit from question_text and convert if needed.
+    """
+    try:
+        # Match "low-high" where low can be negative: e.g. "-2-0", "8-9", "11-15"
+        m = re.match(r'^(-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)$', bucket_range.strip())
+        if not m:
+            return None
+        low, high = float(m.group(1)), float(m.group(2))
+        mid = (low + high) / 2.0
+        # Convert C→F if the market question uses Celsius
+        if '°C' in question_text or '°c' in question_text:
+            mid = mid * 9.0 / 5.0 + 32.0
+        return mid
+    except Exception:
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -118,29 +143,46 @@ class ResolutionTracker:
         for market_id, result in resolutions.items():
             actual_outcome = result["outcome"]
             try:
-                # Fetch p_model from existing prediction record to compute Brier score
+                # Fetch existing prediction fields needed for Brier score and bias tracking
                 existing = (
                     self._logger._client
                     .table(f"{self._logger.table_prefix}predictions")
-                    .select("p_model")
+                    .select("p_model, bucket_range, question_text, forecast_temp_f")
                     .eq("market_id", market_id)
                     .eq("resolved", False)
                     .limit(1)
                     .execute()
                 )
-                p_model = (existing.data[0].get("p_model", 0.5)
-                           if existing.data else 0.5)
+                row = existing.data[0] if existing.data else {}
+                p_model = row.get("p_model", 0.5)
                 brier = (p_model - actual_outcome) ** 2
+
+                update_payload = {
+                    "resolved": True,
+                    "actual_outcome": actual_outcome,
+                    "resolved_at": datetime.now().isoformat(),
+                    "brier_score": brier,
+                }
+
+                # If YES won on a bucket market, record actual temp for rolling bias.
+                if actual_outcome == 1 and row.get("bucket_range"):
+                    actual_temp_f = _bucket_midpoint_f(
+                        row["bucket_range"],
+                        row.get("question_text", ""),
+                    )
+                    if actual_temp_f is not None:
+                        update_payload["actual_temp_f"] = actual_temp_f
+                        logger.info(
+                            f"ACTUAL TEMP: {market_id[:8]} | "
+                            f"bucket={row['bucket_range']} → {actual_temp_f:.1f}°F "
+                            f"| forecast={row.get('forecast_temp_f', '?')}°F "
+                            f"| bias={row.get('forecast_temp_f', 0) - actual_temp_f:.1f}°F"
+                        )
 
                 response = (
                     self._logger._client
                     .table(f"{self._logger.table_prefix}predictions")
-                    .update({
-                        "resolved": True,
-                        "actual_outcome": actual_outcome,
-                        "resolved_at": datetime.now().isoformat(),
-                        "brier_score": brier,
-                    })
+                    .update(update_payload)
                     .eq("market_id", market_id)
                     .eq("resolved", False)
                     .execute()

@@ -394,6 +394,12 @@ class TradingBot:
                 # Update stats
                 self._scan_count += 1
 
+                # Step 3.4: Refresh rolling city biases every 50 scans (~5 min)
+                if self._scan_count % 50 == 0:
+                    biases = await self._logger.get_city_rolling_biases()
+                    if biases:
+                        self._calculator.update_rolling_biases(biases)
+
                 # Step 3.5: Check market resolutions every 10 scans
                 if self._scan_count % 10 == 0 and self._traded_market_ids:
                     resolutions = await self._resolution_tracker.check_resolutions(

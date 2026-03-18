@@ -149,7 +149,7 @@ class FairPriceCalculator:
     ):
         """
         Initialize the fair price calculator.
-        
+
         Args:
             sigma: Standard deviation for temperature (default: 3.5°F)
             default_expected_temp: Default expected temperature (default: 65°F)
@@ -159,6 +159,19 @@ class FairPriceCalculator:
 
         # Pre-compute for performance
         self._normal_dist = stats.norm(loc=0, scale=1)
+
+        # Rolling biases from Supabase (refreshed each scan cycle by main.py).
+        # Overrides CITY_BIAS_F when populated with enough data points.
+        self._rolling_biases: Dict[str, float] = {}
+
+    def update_rolling_biases(self, biases: Dict[str, float]) -> None:
+        """Update per-city bias from rolling Supabase data. Called by main.py."""
+        self._rolling_biases = biases
+        if biases:
+            logger.info(
+                "Rolling bias update: "
+                + ", ".join(f"{c}={v:+.2f}°F" for c, v in sorted(biases.items()))
+            )
 
     def _interpolate_forecast_error(self, lead_hours: int) -> Dict[str, float]:
         """
@@ -216,7 +229,12 @@ class FairPriceCalculator:
             Tuple of (mu, sigma) in °F for T ~ Normal(mu, sigma²)
         """
         error = self._interpolate_forecast_error(lead_hours)
-        city_bias = self.CITY_BIAS_F.get(city.lower(), 0.0) if city else 0.0
+        city_key = city.lower() if city else None
+        # Prefer live rolling bias (self-calibrating); fall back to hardcoded table.
+        if city_key and city_key in self._rolling_biases:
+            city_bias = self._rolling_biases[city_key]
+        else:
+            city_bias = self.CITY_BIAS_F.get(city_key, 0.0) if city_key else 0.0
         mu = forecast_max_temp_f - error["bias"] - city_bias
         sigma = error["sigma"]
 

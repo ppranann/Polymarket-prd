@@ -785,6 +785,61 @@ class AuditLogger:
             logger.warning(f"Could not load exited markets from Supabase: {e}")
             return []
 
+    async def get_city_rolling_biases(
+        self,
+        min_n: int = 3,
+        max_n: int = 20,
+    ) -> dict:
+        """
+        Compute rolling Tomorrow.io bias per city from resolved bucket predictions.
+
+        Uses rows where actual_temp_f IS NOT NULL (i.e., a bucket market resolved
+        YES and we recorded the actual temperature).
+
+        Returns:
+            Dict of city → bias_f  (forecast_temp_f − actual_temp_f).
+            Cities with fewer than min_n data points are omitted so the
+            hardcoded CITY_BIAS_F fallback is used instead.
+        """
+        if not self._connected:
+            return {}
+        try:
+            result = (
+                self._client
+                .table(f"{self.table_prefix}predictions")
+                .select("city, forecast_temp_f, actual_temp_f")
+                .eq("resolved", True)
+                .not_.is_("actual_temp_f", "null")
+                .order("resolved_at", desc=True)
+                .limit(max_n * 10)   # fetch enough rows across all cities
+                .execute()
+            )
+            if not result.data:
+                return {}
+
+            from collections import defaultdict
+            city_errors: dict = defaultdict(list)
+            for row in result.data:
+                city = (row.get("city") or "").lower()
+                f = row.get("forecast_temp_f")
+                a = row.get("actual_temp_f")
+                if city and f is not None and a is not None:
+                    city_errors[city].append(float(f) - float(a))
+                    if len(city_errors[city]) >= max_n:
+                        continue  # already have enough for this city
+
+            biases = {}
+            for city, errors in city_errors.items():
+                if len(errors) >= min_n:
+                    biases[city] = sum(errors) / len(errors)
+                    logger.info(
+                        f"Rolling bias {city}: {biases[city]:+.2f}°F (n={len(errors)})"
+                    )
+            return biases
+        except Exception as e:
+            logger.warning(f"Could not compute rolling city biases: {e}")
+            return {}
+
     async def close(self):
         """Close the logger and sync any remaining buffer"""
         await self.sync_buffer()
