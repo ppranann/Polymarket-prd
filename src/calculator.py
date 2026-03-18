@@ -99,8 +99,13 @@ class FairPriceCalculator:
     # Positive → Tomorrow.io runs hot. Applied on top of FORECAST_ERROR["bias"].
     # Calibrate by collecting (forecast_temp_f, actual_resolution_temp) pairs from Supabase.
     CITY_BIAS_F = {
-        "seoul":   -1.1,   # n=4, Mar 2026: Tomorrow.io runs cold vs Wunderground RKSI
-        "incheon": -1.1,   # same station
+        # bias = mean(Tomorrow.io forecast_f − Wunderground actual_f)
+        # negative → Tomorrow.io runs cold; positive → runs hot
+        "seoul":    -5.7,  # n=6, mid-Mar 2026: large cold bias during spring warming
+        "incheon":  -5.7,  # same station (RKSI)
+        "atlanta":  -1.5,  # n=1, Mar 2026
+        "dallas":   +4.5,  # n=2, Mar 2026: Tomorrow.io runs hot
+        "miami":    -3.5,  # n=2, Mar 2026: Tomorrow.io runs cold
         # "london": 0.0,   # uncalibrated
         # "nyc":    0.0,   # uncalibrated
     }
