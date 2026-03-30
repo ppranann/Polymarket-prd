@@ -531,6 +531,20 @@ class AlphaDetector:
                     f"implied={p_implied:.3f}, market={price:.3f})"
                 )
 
+            # Cheap YES trap filter: cheap markets are cheap because the model
+            # is miscalibrated or the market knows something we don't.
+            # Only buy YES below min_yes_buy_price if p_model is genuinely strong.
+            min_yes = getattr(self.alpha_config, 'min_yes_buy_price', 0.10)
+            if signal.action == "BUY" and price < min_yes and p_model < 0.25:
+                signal.action = "HOLD"
+                signal.recommendation = (
+                    f"HOLD: cheap YES trap (price=${price:.3f} < min=${min_yes:.2f}, "
+                    f"p_model={p_model:.3f} < 0.25)"
+                )
+                logger.info(
+                    f"CHEAP_YES_FILTER: {market.id[:8]} price={price:.3f} p_model={p_model:.3f} — blocked"
+                )
+
             signals.append(signal)
 
         # --- Step 3: For bucket markets, ladder top N underpriced buckets ---
@@ -567,7 +581,14 @@ class AlphaDetector:
             signal.event_key = group.event_key
 
             if signal.action == "BUY":
-                signals.append(signal)
+                min_yes = getattr(self.alpha_config, 'min_yes_buy_price', 0.10)
+                if price < min_yes and p_model < 0.25:
+                    logger.info(
+                        f"CHEAP_YES_FILTER bucket: {market.id[:8]} price={price:.3f} "
+                        f"p_model={p_model:.3f} — blocked"
+                    )
+                else:
+                    signals.append(signal)
 
         # --- Step 4: Bucket integrity check (model-free structural arb) ---
         # Σ P_market(bucket_i) should ≈ 1.0. Significant deviation = arb opportunity.

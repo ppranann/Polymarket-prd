@@ -77,7 +77,7 @@ class FairPriceCalculator:
     SIGMA_BY_HORIZON = {
         0: 2.0,   # Same-day: Tomorrow.io is very accurate once day is underway
         1: 3.0,   # 1 day out: calibrated vs Wunderground RKSI actuals
-        2: 4.5,   # 2 days out: NWP error grows
+        2: 3.5,   # 2 days out: tightened from 4.5 (Mar 2026 data showed 4.5 too wide)
         3: 6.0,   # 3 days out: wider but still much tighter than previous 10°F
     }
 
@@ -91,7 +91,7 @@ class FairPriceCalculator:
     FORECAST_ERROR = {
         0:  {"bias": 0.0, "sigma": 2.0},   # Same-day
         24: {"bias": 0.0, "sigma": 3.0},   # 1 day out
-        48: {"bias": 0.0, "sigma": 4.5},   # 2 days out (primary trading horizon)
+        48: {"bias": 0.0, "sigma": 3.5},   # 2 days out (tightened from 4.5, Mar 2026 data)
         72: {"bias": 0.0, "sigma": 6.0},   # 3 days out
     }
 
@@ -101,13 +101,14 @@ class FairPriceCalculator:
     CITY_BIAS_F = {
         # bias = mean(Tomorrow.io forecast_f − Wunderground actual_f)
         # negative → Tomorrow.io runs cold; positive → runs hot
-        "seoul":    -5.7,  # n=6, mid-Mar 2026: large cold bias during spring warming
-        "incheon":  -5.7,  # same station (RKSI)
-        "atlanta":  -1.5,  # n=1, Mar 2026
-        "dallas":   +4.5,  # n=2, Mar 2026: Tomorrow.io runs hot
-        "miami":    -3.5,  # n=2, Mar 2026: Tomorrow.io runs cold
-        # "london": 0.0,   # uncalibrated
-        # "nyc":    0.0,   # uncalibrated
+        "seoul":    -12.0,  # n=10, Mar 2026: spring warming; forecast was -11.7°F cold avg
+        "incheon":  -12.0,  # same station (RKSI)
+        "atlanta":  -1.5,   # n=3, Mar 2026: avg error ≈ -2°F
+        "dallas":   +4.5,   # n=5, Mar 2026: Tomorrow.io runs hot
+        "miami":    -1.0,   # n=3, Mar 2026: was -3.5 but overcorrecting; avg error ≈ -0.8°F
+        "chicago":  +3.2,   # n=3, Mar 2026: Tomorrow.io runs hot (avg +3.2°F)
+        # "london": 0.0,    # uncalibrated
+        # "nyc":    0.0,    # uncalibrated, high variance (±6°F)
     }
 
     # Extra sigma for range/bucket markets

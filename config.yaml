@@ -71,6 +71,7 @@ alpha:
   min_z_score: 1.0               # Skip threshold markets where |z| < this (forecast ≈ threshold = fake edge)
   ensemble_max_spread_f: 4.0     # Skip group if NWS vs Open-Meteo disagree by more than this (°F)
   max_ladder_buckets: 2          # Ladder up to this many adjacent bucket markets per event
+  min_yes_buy_price: 0.10        # Never buy YES below this unless p_model > 0.25 (cheap YES trap)
 
 logging:
   level: INFO
