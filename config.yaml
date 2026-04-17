@@ -72,6 +72,7 @@ alpha:
   ensemble_max_spread_f: 4.0     # Skip group if NWS vs Open-Meteo disagree by more than this (°F)
   max_ladder_buckets: 2          # Ladder up to this many adjacent bucket markets per event
   min_yes_buy_price: 0.10        # Never buy YES below this unless p_model > 0.25 (cheap YES trap)
+  invert_direction: true         # If true, flip all trades (BUY↔BUY_NO) — for contrarian testing
 
 logging:
   level: INFO

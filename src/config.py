@@ -69,6 +69,7 @@ class AlphaConfig:
     min_days_out: int = 1             # Skip same-day markets (outcome nearly determined, less edge)
     max_days_out: int = 3             # Skip markets >3 days out (forecast too uncertain)
     min_yes_buy_price: float = 0.10   # Never buy YES below this unless p_model > 0.25 (cheap YES trap)
+    invert_direction: bool = False    # If True, flip all trades (BUY↔BUY_NO) — for contrarian/testing
 
 
 @dataclass

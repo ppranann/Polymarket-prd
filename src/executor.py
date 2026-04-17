@@ -327,6 +327,15 @@ class OrderExecutor:
                 reason="No trading signal (alpha below threshold)"
             )
 
+        # Invert direction if configured (for contrarian/testing: buy NO instead of YES)
+        if getattr(self.config.alpha, 'invert_direction', False):
+            if action == "BUY":
+                action = "BUY_NO"
+            elif action == "BUY_NO":
+                action = "BUY"
+            # SELL stays SELL, HOLD stays HOLD
+            logger.info(f"INVERT_DIRECTION: flipped action to {action}")
+
         # Check permanent block — once a market is traded/exited, never re-enter
         if market.id in self._permanently_blocked:
             return ExecutionResult(
