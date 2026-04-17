@@ -13,15 +13,15 @@ services:
       - AWS_SECRET_NAME=polymarket-bot/production
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - PYTHONPATH=/app
-      - PAPER_TRADING=true   # Safety: blocks real CLOB even if --paper flag is missing
+      - PAPER_TRADING=false  # Live trading with real money
     volumes:
       # Config is baked into the image — no local override needed.
       # Change config.yaml locally, commit, push, and redeploy.
       - ./logs:/app/logs
       - ~/.aws:/root/.aws:ro
     restart: unless-stopped
-    command: ["python", "-m", "src.main", "--config", "/app/config.yaml"]
-    # To run in LIVE mode: add --live flag above. Without it, bot is always in paper mode.
+    command: ["python", "-m", "src.main", "--config", "/app/config.yaml", "--live"]
+    # Running in LIVE mode with real money trading enabled
     logging:
       driver: "json-file"
       options:
