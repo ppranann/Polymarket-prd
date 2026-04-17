@@ -99,6 +99,7 @@ class PolymarketClient:
         self._api_secret = ''
         self._api_passphrase = ''
         self._proxy_address = ''
+        self._funder = ''
         self._chain_id = 137
         secrets = kwargs.get('secrets')
         if secrets:
@@ -106,6 +107,8 @@ class PolymarketClient:
             self._api_secret = getattr(secrets, 'polymarket_api_secret', '')
             self._api_passphrase = getattr(secrets, 'polymarket_api_passphrase', '')
             self._proxy_address = getattr(secrets, 'polymarket_proxy_address', '')
+            # For Google accounts: use POLYMARKET_FUNDER (proxy address) as funder
+            self._funder = getattr(secrets, 'polymarket_funder', self._proxy_address)
         config = kwargs.get('config')
         if config:
             self._chain_id = getattr(config, 'chain_id', 137)
@@ -121,15 +124,15 @@ class PolymarketClient:
         self._clob = None
         if not self._paper_trading and self._private_key and CLOB_AVAILABLE:
             try:
-                # Use signature_type=2 (proxy wallet) when proxy address is provided
+                # Use signature_type=2 (proxy wallet) when funder address is provided
                 # — this is the correct mode when funds live in Polymarket's contract wallet
-                use_proxy = bool(self._proxy_address)
+                use_proxy = bool(self._funder)
                 self._clob = ClobClient(
                     host=self.CLOB_URL,
                     key=self._private_key,
                     chain_id=self._chain_id,
                     signature_type=2 if use_proxy else 0,
-                    funder=self._proxy_address if use_proxy else None,
+                    funder=self._funder if use_proxy else None,
                 )
 
                 # Use pre-provided API creds if passphrase is in secrets,

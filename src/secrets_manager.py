@@ -21,10 +21,11 @@ logger = logging.getLogger(__name__)
 class BotSecrets:
     """Container for all bot secrets"""
     # Polymarket
-    polygon_private_key: str = ""
+    polygon_private_key: str = ""         # Polygon private key (may not exist for Google accounts)
+    polymarket_funder: str = ""           # Funding address (proxy address for Google accounts)
     polymarket_api_key: str = ""
     polymarket_api_secret: str = ""
-    polymarket_api_passphrase: str = ""   # From Polymarket API credentials page
+    polymarket_api_passphrase: str = ""   # From Polymarket API credentials page (or POLYMARKET_PASSPHRASE)
     polymarket_proxy_address: str = ""    # Proxy contract wallet address shown on Polymarket profile
 
     # Tomorrow.io
